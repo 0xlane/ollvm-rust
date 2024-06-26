@@ -1,0 +1,4267 @@
+diff --git "a/clang/lib/CodeGen/BackendUtil.cpp" "b/clang/lib/CodeGen/BackendUtil.cpp"
+index 4f22d35..f3ffad5 100644
+--- "a/clang/lib/CodeGen/BackendUtil.cpp"
++++ "b/clang/lib/CodeGen/BackendUtil.cpp"
+@@ -1148,6 +1148,7 @@ void EmitAssemblyHelper::RunCodegenPipeline(
+ void EmitAssemblyHelper::EmitAssembly(BackendAction Action,
+                                       std::unique_ptr<raw_pwrite_stream> OS,
+                                       BackendConsumer *BC) {
++  outs() << TheModule->getName() << "\n\n";
+   TimeRegion Region(CodeGenOpts.TimePasses ? &CodeGenerationTime : nullptr);
+   setCommandLineOpts(CodeGenOpts);
+ 
+diff --git "a/llvm/include/llvm/CryptoUtils.h" "b/llvm/include/llvm/CryptoUtils.h"
+new file mode 100644
+index 0000000..56b2f0c
+--- /dev/null
++++ "b/llvm/include/llvm/CryptoUtils.h"
+@@ -0,0 +1,263 @@
++//===- CryptoUtils.h - Cryptographically Secure Pseudo-Random Generator ---===//
++//
++//                     The LLVM Compiler Infrastructure
++//
++// This file is distributed under the University of Illinois Open Source
++// License. See LICENSE.TXT for details.
++//
++//===----------------------------------------------------------------------===//
++//
++// This file contains includes and defines for the AES CTR PRNG
++// The AES implementation has been derived and adapted
++// from libtomcrypt (see http://libtom.org)
++// Created on: 22 juin 2012
++// Author(s): jrinaldini, pjunod
++//===----------------------------------------------------------------------===//
++
++#ifndef LLVM_CryptoUtils_H
++#define LLVM_CryptoUtils_H
++
++#include "llvm/Support/ManagedStatic.h"
++
++#include <stdint.h>
++#include <cstdio>
++#include <string>
++
++namespace llvm {
++
++class CryptoUtils;
++extern ManagedStatic<CryptoUtils> cryptoutils;
++
++#define BYTE(x, n) (((x) >> (8 * (n))) & 0xFF)
++
++#if defined(__i386) || defined(__i386__) || defined(_M_IX86) ||                \
++    defined(INTEL_CC)
++
++#ifndef ENDIAN_LITTLE
++#define ENDIAN_LITTLE
++#endif
++#define ENDIAN_32BITWORD
++#define UNALIGNED
++
++#elif defined(__alpha)
++
++#ifndef ENDIAN_LITTLE
++#define ENDIAN_LITTLE
++#endif
++#define ENDIAN_64BITWORD
++
++#elif defined(__x86_64__)
++
++#ifndef ENDIAN_LITTLE
++#define ENDIAN_LITTLE
++#endif
++#define ENDIAN_64BITWORD
++#define UNALIGNED
++
++#elif(defined(__R5900) || defined(R5900) || defined(__R5900__)) &&             \
++    (defined(_mips) || defined(__mips__) || defined(mips))
++
++#ifndef ENDIAN_LITTLE
++#define ENDIAN_LITTLE
++#endif
++#define ENDIAN_64BITWORD
++
++#elif defined(__sparc)
++
++#ifndef ENDIAN_BIG
++#define ENDIAN_BIG
++#endif
++#if defined(__arch64__)
++#define ENDIAN_64BITWORD
++#else
++#define ENDIAN_32BITWORD
++#endif
++
++#endif
++
++#if defined(__BIG_ENDIAN__) || defined(_BIG_ENDIAN)
++#define ENDIAN_BIG
++#endif
++
++#if !defined(ENDIAN_BIG) && !defined(ENDIAN_LITTLE)
++#define ENDIAN_LITTLE
++#endif
++
++#ifdef ENDIAN_LITTLE
++
++#define STORE32H(y, x)                                                         \
++  {                                                                            \
++    (y)[0] = (uint8_t)(((x) >> 24) & 0xFF);                                    \
++    (y)[1] = (uint8_t)(((x) >> 16) & 0xFF);                                    \
++    (y)[2] = (uint8_t)(((x) >> 8) & 0xFF);                                     \
++    (y)[3] = (uint8_t)(((x) >> 0) & 0xFF);                                     \
++  }
++#define LOAD32H(x, y)                                                          \
++  {                                                                            \
++    (x) = ((uint32_t)((y)[0] & 0xFF) << 24) |                                  \
++          ((uint32_t)((y)[1] & 0xFF) << 16) |                                  \
++          ((uint32_t)((y)[2] & 0xFF) << 8) | ((uint32_t)((y)[3] & 0xFF) << 0); \
++  }
++
++#define LOAD64H(x, y)                                                          \
++  {                                                                            \
++    (x) = ((uint64_t)((y)[0] & 0xFF) << 56) |                                  \
++          ((uint64_t)((y)[1] & 0xFF) << 48) |                                  \
++          ((uint64_t)((y)[2] & 0xFF) << 40) |                                  \
++          ((uint64_t)((y)[3] & 0xFF) << 32) |                                  \
++          ((uint64_t)((y)[4] & 0xFF) << 24) |                                  \
++          ((uint64_t)((y)[5] & 0xFF) << 16) |                                  \
++          ((uint64_t)((y)[6] & 0xFF) << 8) | ((uint64_t)((y)[7] & 0xFF) << 0); \
++  }
++
++#define STORE64H(y, x)                                                         \
++  {                                                                            \
++    (y)[0] = (uint8_t)(((x) >> 56) & 0xFF);                                    \
++    (y)[1] = (uint8_t)(((x) >> 48) & 0xFF);                                    \
++    (y)[2] = (uint8_t)(((x) >> 40) & 0xFF);                                    \
++    (y)[3] = (uint8_t)(((x) >> 32) & 0xFF);                                    \
++    (y)[4] = (uint8_t)(((x) >> 24) & 0xFF);                                    \
++    (y)[5] = (uint8_t)(((x) >> 16) & 0xFF);                                    \
++    (y)[6] = (uint8_t)(((x) >> 8) & 0xFF);                                     \
++    (y)[7] = (uint8_t)(((x) >> 0) & 0xFF);                                     \
++  }
++
++#endif /* ENDIAN_LITTLE */
++
++#ifdef ENDIAN_BIG
++
++#define STORE32H(y, x)                                                         \
++  {                                                                            \
++    (y)[3] = (uint8_t)(((x) >> 24) & 0xFF);                                    \
++    (y)[2] = (uint8_t)(((x) >> 16) & 0xFF);                                    \
++    (y)[1] = (uint8_t)(((x) >> 8) & 0xFF);                                     \
++    (y)[0] = (uint8_t)(((x) >> 0) & 0xFF);                                     \
++  }
++#define STORE64H(y, x)                                                         \
++  {                                                                            \
++    (y)[7] = (uint8_t)(((x) >> 56) & 0xFF);                                    \
++    (y)[6] = (uint8_t)(((x) >> 48) & 0xFF);                                    \
++    (y)[5] = (uint8_t)(((x) >> 40) & 0xFF);                                    \
++    (y)[4] = (uint8_t)(((x) >> 32) & 0xFF);                                    \
++    (y)[3] = (uint8_t)(((x) >> 24) & 0xFF);                                    \
++    (y)[2] = (uint8_t)(((x) >> 16) & 0xFF);                                    \
++    (y)[1] = (uint8_t)(((x) >> 8) & 0xFF);                                     \
++    (y)[0] = (uint8_t)(((x) >> 0) & 0xFF);                                     \
++  }
++#define LOAD32H(x, y)                                                          \
++  {                                                                            \
++    (x) = ((uint32_t)((y)[3] & 0xFF) << 24) |                                  \
++          ((uint32_t)((y)[2] & 0xFF) << 16) |                                  \
++          ((uint32_t)((y)[1] & 0xFF) << 8) | ((uint32_t)((y)[0] & 0xFF) << 0); \
++}
++
++#define LOAD64H(x, y)                                                          \
++  {                                                                            \
++    (x) = ((uint64_t)((y)[7] & 0xFF) << 56) |                                  \
++          ((uint64_t)((y)[6] & 0xFF) << 48) |                                  \
++          ((uint64_t)((y)[5] & 0xFF) << 40) |                                  \
++          ((uint64_t)((y)[4] & 0xFF) << 32) |                                  \
++          ((uint64_t)((y)[3] & 0xFF) << 24) |                                  \
++          ((uint64_t)((y)[2] & 0xFF) << 16) |                                  \
++          ((uint64_t)((y)[1] & 0xFF) << 8) | ((uint64_t)((y)[0] & 0xFF) << 0); \
++  }
++
++#endif /* ENDIAN_BIG */
++
++#define AES_TE0(x) AES_PRECOMP_TE0[(x)]
++#define AES_TE1(x) AES_PRECOMP_TE1[(x)]
++#define AES_TE2(x) AES_PRECOMP_TE2[(x)]
++#define AES_TE3(x) AES_PRECOMP_TE3[(x)]
++
++#define AES_TE4_0(x) AES_PRECOMP_TE4_0[(x)]
++#define AES_TE4_1(x) AES_PRECOMP_TE4_1[(x)]
++#define AES_TE4_2(x) AES_PRECOMP_TE4_2[(x)]
++#define AES_TE4_3(x) AES_PRECOMP_TE4_3[(x)]
++
++#define CryptoUtils_POOL_SIZE (0x1 << 17) // 2^17
++
++#define DUMP(x, l, s)                                                          \
++  fprintf(stderr, "%s :", (s));                                                \
++  for (int ii = 0; ii < (l); ii++) {                                           \
++    fprintf(stderr, "%02hhX", *((x) + ii));                                    \
++  }                                                                            \
++  fprintf(stderr, "\n");
++
++// SHA256
++/* Various logical functions */
++#define Ch(x, y, z) (z ^ (x &(y ^ z)))
++#define Maj(x, y, z) (((x | y) & z) | (x &y))
++#define S(x, n) RORc((x), (n))
++#define R(x, n) (((x) & 0xFFFFFFFFUL) >> (n))
++#define Sigma0(x) (S(x, 2) ^ S(x, 13) ^ S(x, 22))
++#define Sigma1(x) (S(x, 6) ^ S(x, 11) ^ S(x, 25))
++#define Gamma0(x) (S(x, 7) ^ S(x, 18) ^ R(x, 3))
++#define Gamma1(x) (S(x, 17) ^ S(x, 19) ^ R(x, 10))
++#define MIN(x, y) (((x) < (y)) ? (x) : (y))
++
++#define RND(a, b, c, d, e, f, g, h, i, ki)                                     \
++  t0 = h + Sigma1(e) + Ch(e, f, g) + ki + W[i];                                \
++  t1 = Sigma0(a) + Maj(a, b, c);                                               \
++  d += t0;                                                                     \
++  h = t0 + t1;
++
++#define RORc(x, y)                                                             \
++  (((((unsigned long)(x) & 0xFFFFFFFFUL) >> (unsigned long)((y) & 31)) |       \
++    ((unsigned long)(x) << (unsigned long)(32 - ((y) & 31)))) &                \
++   0xFFFFFFFFUL)
++
++class CryptoUtils {
++public:
++  CryptoUtils();
++  ~CryptoUtils();
++
++  char *get_seed();
++  void get_bytes(char *buffer, const int len);
++  char get_char();
++  void prng_seed(const std::string seed);
++
++  // Returns a uniformly distributed 8-bit value
++  uint8_t get_uint8_t();
++  // Returns a uniformly distributed 32-bit value
++  uint32_t get_uint32_t();
++  // Returns an integer uniformly distributed on [0, max[
++  uint32_t get_range(const uint32_t max);
++  // Returns a uniformly distributed 64-bit value
++  uint64_t get_uint64_t();
++
++  // Scramble a 32-bit value depending on a 128-bit value
++  unsigned scramble32(const unsigned in, const char key[16]);
++  unsigned long long scramble64(const unsigned in, const char key[16]);
++
++  int sha256(const char *msg, unsigned char *hash);
++
++private:
++  uint32_t ks[44];
++  char key[16];
++  char ctr[16];
++  char pool[CryptoUtils_POOL_SIZE];
++  uint32_t idx;
++  std::string seed;
++  bool seeded;
++
++  typedef struct {
++    uint64_t length;
++    uint32_t state[8], curlen;
++    unsigned char buf[64];
++  } sha256_state;
++
++  void aes_compute_ks(uint32_t *ks, const char *k);
++  void aes_encrypt(char *out, const char *in, const uint32_t *ks);
++  void prng_seed();
++  void inc_ctr();
++  void populate_pool();
++  int sha256_done(sha256_state *md, unsigned char *out);
++  int sha256_init(sha256_state *md);
++  static int sha256_compress(sha256_state *md, unsigned char *buf);
++  int sha256_process(sha256_state *md, const unsigned char *in,
++                     unsigned long inlen);
++};
++}
++
++#endif // LLVM_CryptoUtils_H
++
+diff --git "a/llvm/include/llvm/LinkAllPasses.h" "b/llvm/include/llvm/LinkAllPasses.h"
+index fe7feda..5ce5c48 100644
+--- "a/llvm/include/llvm/LinkAllPasses.h"
++++ "b/llvm/include/llvm/LinkAllPasses.h"
+@@ -45,6 +45,7 @@
+ #include "llvm/Transforms/Utils.h"
+ #include "llvm/Transforms/Utils/SymbolRewriter.h"
+ #include "llvm/Transforms/Vectorize/LoadStoreVectorizer.h"
++#include "llvm/Transforms/Obfuscation/ObfuscationPassManager.h"
+ #include <cstdlib>
+ 
+ namespace {
+@@ -138,6 +139,7 @@ namespace {
+       (void) llvm::createUnifyLoopExitsPass();
+       (void) llvm::createFixIrreduciblePass();
+       (void)llvm::createSelectOptimizePass();
++      (void)llvm::createObfuscationPassManager();
+ 
+       (void)new llvm::IntervalPartition();
+       (void)new llvm::ScalarEvolutionWrapperPass();
+diff --git "a/llvm/include/llvm/Transforms/Obfuscation/Flattening.h" "b/llvm/include/llvm/Transforms/Obfuscation/Flattening.h"
+new file mode 100644
+index 0000000..d5facc2
+--- /dev/null
++++ "b/llvm/include/llvm/Transforms/Obfuscation/Flattening.h"
+@@ -0,0 +1,25 @@
++//===- FlatteningIncludes.h - Flattening Obfuscation pass------------------===//
++//
++//                     The LLVM Compiler Infrastructure
++//
++// This file is distributed under the University of Illinois Open Source
++// License. See LICENSE.TXT for details.
++//
++//===----------------------------------------------------------------------===//
++//
++// This file contains includes and defines for the flattening pass
++//
++//===----------------------------------------------------------------------===//
++
++#ifndef _FLATTENING_INCLUDES_
++#define _FLATTENING_INCLUDES_
++
++namespace llvm {
++class FunctionPass;
++struct ObfuscationOptions;
++FunctionPass *createFlatteningPass(unsigned pointerSize);
++FunctionPass *createFlatteningPass(unsigned pointerSize, bool flag, ObfuscationOptions *Options);
++}
++
++#endif
++
+diff --git "a/llvm/include/llvm/Transforms/Obfuscation/IndirectBranch.h" "b/llvm/include/llvm/Transforms/Obfuscation/IndirectBranch.h"
+new file mode 100644
+index 0000000..bb5f46b
+--- /dev/null
++++ "b/llvm/include/llvm/Transforms/Obfuscation/IndirectBranch.h"
+@@ -0,0 +1,16 @@
++#ifndef OBFUSCATION_INDIRECTBR_H
++#define OBFUSCATION_INDIRECTBR_H
++
++// Namespace
++namespace llvm {
++class FunctionPass;
++class PassRegistry;
++struct ObfuscationOptions;
++
++FunctionPass* createIndirectBranchPass(unsigned pointerSize);
++FunctionPass* createIndirectBranchPass(unsigned pointerSize, bool flag, ObfuscationOptions *Options);
++void initializeIndirectBranchPass(PassRegistry &Registry);
++
++}
++
++#endif
+diff --git "a/llvm/include/llvm/Transforms/Obfuscation/IndirectCall.h" "b/llvm/include/llvm/Transforms/Obfuscation/IndirectCall.h"
+new file mode 100644
+index 0000000..a0c0db5
+--- /dev/null
++++ "b/llvm/include/llvm/Transforms/Obfuscation/IndirectCall.h"
+@@ -0,0 +1,16 @@
++#ifndef OBFUSCATION_INDIRECT_CALL_H
++#define OBFUSCATION_INDIRECT_CALL_H
++
++// Namespace
++namespace llvm {
++class FunctionPass;
++class PassRegistry;
++struct ObfuscationOptions;
++
++FunctionPass* createIndirectCallPass(unsigned pointerSize);
++FunctionPass* createIndirectCallPass(unsigned pointerSize, bool flag, ObfuscationOptions *Options);
++void initializeIndirectCallPass(PassRegistry &Registry);
++
++}
++
++#endif
+diff --git "a/llvm/include/llvm/Transforms/Obfuscation/IndirectGlobalVariable.h" "b/llvm/include/llvm/Transforms/Obfuscation/IndirectGlobalVariable.h"
+new file mode 100644
+index 0000000..ed91b9b
+--- /dev/null
++++ "b/llvm/include/llvm/Transforms/Obfuscation/IndirectGlobalVariable.h"
+@@ -0,0 +1,16 @@
++#ifndef OBFUSCATION_INDIRECT_GLOBAL_VARIABLE_H
++#define OBFUSCATION_INDIRECT_GLOBAL_VARIABLE_H
++
++// Namespace
++namespace llvm {
++class FunctionPass;
++class PassRegistry;
++struct ObfuscationOptions;
++
++FunctionPass* createIndirectGlobalVariablePass(unsigned pointerSize);
++FunctionPass* createIndirectGlobalVariablePass(unsigned pointerSize, bool flag, ObfuscationOptions *Options);
++void initializeIndirectGlobalVariablePass(PassRegistry &Registry);
++
++}
++
++#endif
+diff --git "a/llvm/include/llvm/Transforms/Obfuscation/LegacyLowerSwitch.h" "b/llvm/include/llvm/Transforms/Obfuscation/LegacyLowerSwitch.h"
+new file mode 100644
+index 0000000..552f6d0
+--- /dev/null
++++ "b/llvm/include/llvm/Transforms/Obfuscation/LegacyLowerSwitch.h"
+@@ -0,0 +1,10 @@
++#ifndef _LEGACY_LOWERSWITCH_INCLUDES_
++#define _LEGACY_LOWERSWITCH_INCLUDES_
++
++namespace llvm {
++class FunctionPass;
++FunctionPass *createLegacyLowerSwitchPass();
++}
++
++#endif
++
+diff --git "a/llvm/include/llvm/Transforms/Obfuscation/ObfuscationOptions.h" "b/llvm/include/llvm/Transforms/Obfuscation/ObfuscationOptions.h"
+new file mode 100644
+index 0000000..f0e37ad
+--- /dev/null
++++ "b/llvm/include/llvm/Transforms/Obfuscation/ObfuscationOptions.h"
+@@ -0,0 +1,31 @@
++#ifndef OBFUSCATION_OBFUSCATIONOPTIONS_H
++#define OBFUSCATION_OBFUSCATIONOPTIONS_H
++
++#include <set>
++#include <llvm/Support/YAMLParser.h>
++
++namespace llvm {
++
++struct ObfuscationOptions {
++  explicit ObfuscationOptions(const Twine &FileName);
++  explicit ObfuscationOptions();
++  bool skipFunction(const Twine &FName);
++  void dump();
++
++  bool EnableIndirectBr;
++  bool EnableIndirectCall;
++  bool EnableIndirectGV;
++  bool EnableCFF;
++  bool EnableCSE;
++  bool hasFilter;
++
++private:
++  void init();
++  void handleRoot(yaml::Node *n);
++  bool parseOptions(const Twine &FileName);
++  std::set<std::string> FunctionFilter;
++};
++
++}
++
++#endif
+diff --git "a/llvm/include/llvm/Transforms/Obfuscation/ObfuscationPassManager.h" "b/llvm/include/llvm/Transforms/Obfuscation/ObfuscationPassManager.h"
+new file mode 100644
+index 0000000..bacc9b5
+--- /dev/null
++++ "b/llvm/include/llvm/Transforms/Obfuscation/ObfuscationPassManager.h"
+@@ -0,0 +1,36 @@
++#ifndef OBFUSCATION_OBFUSCATIONPASSMANAGER_H
++#define OBFUSCATION_OBFUSCATIONPASSMANAGER_H
++
++#include "llvm/Transforms/Obfuscation/Flattening.h"
++#include "llvm/Transforms/Obfuscation/IndirectBranch.h"
++#include "llvm/Transforms/Obfuscation/IndirectCall.h"
++#include "llvm/Transforms/Obfuscation/IndirectGlobalVariable.h"
++#include "llvm/Transforms/Obfuscation/StringEncryption.h"
++#include "llvm/Passes/PassBuilder.h"
++
++// Namespace
++namespace llvm {
++class ModulePass;
++class PassRegistry;
++
++ModulePass *createObfuscationPassManager();
++void initializeObfuscationPassManagerPass(PassRegistry &Registry);
++
++class ObfuscationPassManagerPass
++    : public PassInfoMixin<ObfuscationPassManagerPass> {
++public:
++  PreservedAnalyses run(Module &M, ModuleAnalysisManager &AM) {
++    ModulePass *OPM = createObfuscationPassManager();
++    bool Changed = OPM->runOnModule(M);
++    OPM->doFinalization(M);
++    delete OPM;
++    if (Changed) {
++      return PreservedAnalyses::none();
++    }
++    return PreservedAnalyses::all();
++  }
++};
++
++} // namespace llvm
++
++#endif
+\ No newline at end of file
+diff --git "a/llvm/include/llvm/Transforms/Obfuscation/StringEncryption.h" "b/llvm/include/llvm/Transforms/Obfuscation/StringEncryption.h"
+new file mode 100644
+index 0000000..66b718a
+--- /dev/null
++++ "b/llvm/include/llvm/Transforms/Obfuscation/StringEncryption.h"
+@@ -0,0 +1,15 @@
++#ifndef OBFUSCATION_STRING_ENCRYPTION_H
++#define OBFUSCATION_STRING_ENCRYPTION_H
++
++namespace llvm {
++class ModulePass;
++class PassRegistry;
++struct ObfuscationOptions;
++
++ModulePass* createStringEncryptionPass();
++ModulePass* createStringEncryptionPass(bool flag, ObfuscationOptions *Options);
++void initializeStringEncryptionPass(PassRegistry &Registry);
++
++}
++
++#endif
+diff --git "a/llvm/include/llvm/Transforms/Obfuscation/Utils.h" "b/llvm/include/llvm/Transforms/Obfuscation/Utils.h"
+new file mode 100644
+index 0000000..f6ea9e4
+--- /dev/null
++++ "b/llvm/include/llvm/Transforms/Obfuscation/Utils.h"
+@@ -0,0 +1,15 @@
++#ifndef __UTILS_OBF__
++#define __UTILS_OBF__
++
++#include "llvm/IR/Function.h"
++#include "llvm/IR/Instructions.h"
++#include "llvm/Transforms/Utils/Local.h" // For DemoteRegToStack and DemotePHIToStack
++
++using namespace llvm;
++bool valueEscapes(Instruction *Inst);
++void fixStack(Function *f);
++std::string readAnnotate(Function *f);
++bool toObfuscate(bool flag, Function *f, std::string attribute);
++void LowerConstantExpr(Function &F);
++
++#endif
+diff --git "a/llvm/lib/Passes/PassBuilderPipelines.cpp" "b/llvm/lib/Passes/PassBuilderPipelines.cpp"
+index 6ede863..f6c1b3d 100644
+--- "a/llvm/lib/Passes/PassBuilderPipelines.cpp"
++++ "b/llvm/lib/Passes/PassBuilderPipelines.cpp"
+@@ -135,6 +135,7 @@
+ #include "llvm/Transforms/Vectorize/LoopVectorize.h"
+ #include "llvm/Transforms/Vectorize/SLPVectorizer.h"
+ #include "llvm/Transforms/Vectorize/VectorCombine.h"
++#include "llvm/Transforms/Obfuscation/ObfuscationPassManager.h"
+ 
+ using namespace llvm;
+ 
+@@ -1496,7 +1497,7 @@ PassBuilder::buildPerModuleDefaultPipeline(OptimizationLevel Level,
+     return buildO0DefaultPipeline(Level, LTOPreLink);
+ 
+   ModulePassManager MPM;
+-
++  MPM.addPass(ObfuscationPassManagerPass());
+   // Convert @llvm.global.annotations to !annotation metadata.
+   MPM.addPass(Annotation2MetadataPass());
+ 
+@@ -1559,7 +1560,7 @@ PassBuilder::buildThinLTOPreLinkDefaultPipeline(OptimizationLevel Level) {
+     return buildO0DefaultPipeline(Level, /*LTOPreLink*/true);
+ 
+   ModulePassManager MPM;
+-
++  MPM.addPass(ObfuscationPassManagerPass());
+   // Convert @llvm.global.annotations to !annotation metadata.
+   MPM.addPass(Annotation2MetadataPass());
+ 
+@@ -1602,7 +1603,6 @@ PassBuilder::buildThinLTOPreLinkDefaultPipeline(OptimizationLevel Level) {
+   addAnnotationRemarksPass(MPM);
+ 
+   addRequiredLTOPreLinkPasses(MPM);
+-
+   return MPM;
+ }
+ 
+@@ -1657,7 +1657,6 @@ ModulePassManager PassBuilder::buildThinLTODefaultPipeline(
+ 
+   // Emit annotation remarks.
+   addAnnotationRemarksPass(MPM);
+-
+   return MPM;
+ }
+ 
+@@ -1992,7 +1991,7 @@ ModulePassManager PassBuilder::buildO0DefaultPipeline(OptimizationLevel Level,
+          "buildO0DefaultPipeline should only be used with O0");
+ 
+   ModulePassManager MPM;
+-
++  MPM.addPass(ObfuscationPassManagerPass());
+   // Perform pseudo probe instrumentation in O0 mode. This is for the
+   // consistency between different build modes. For example, a LTO build can be
+   // mixed with an O0 prelink and an O2 postlink. Loading a sample profile in
+@@ -2082,7 +2081,6 @@ ModulePassManager PassBuilder::buildO0DefaultPipeline(OptimizationLevel Level,
+     addRequiredLTOPreLinkPasses(MPM);
+ 
+   MPM.addPass(createModuleToFunctionPassAdaptor(AnnotationRemarksPass()));
+-
+   return MPM;
+ }
+ 
+diff --git "a/llvm/lib/Transforms/CMakeLists.txt" "b/llvm/lib/Transforms/CMakeLists.txt"
+index 84a7e34..b902aa3 100644
+--- "a/llvm/lib/Transforms/CMakeLists.txt"
++++ "b/llvm/lib/Transforms/CMakeLists.txt"
+@@ -10,3 +10,4 @@ add_subdirectory(ObjCARC)
+ add_subdirectory(Coroutines)
+ add_subdirectory(CFGuard)
+ add_subdirectory(HipStdPar)
++add_subdirectory(Obfuscation)
+\ No newline at end of file
+diff --git "a/llvm/lib/Transforms/IPO/CMakeLists.txt" "b/llvm/lib/Transforms/IPO/CMakeLists.txt"
+index 034f158..5c73dfe 100644
+--- "a/llvm/lib/Transforms/IPO/CMakeLists.txt"
++++ "b/llvm/lib/Transforms/IPO/CMakeLists.txt"
+@@ -72,4 +72,5 @@ add_llvm_component_library(LLVMipo
+   TransformUtils
+   Vectorize
+   Instrumentation
++  Obfuscation
+   )
+diff --git "a/llvm/lib/Transforms/Obfuscation/CMakeLists.txt" "b/llvm/lib/Transforms/Obfuscation/CMakeLists.txt"
+new file mode 100644
+index 0000000..4010cb7
+--- /dev/null
++++ "b/llvm/lib/Transforms/Obfuscation/CMakeLists.txt"
+@@ -0,0 +1,20 @@
++add_llvm_component_library(LLVMObfuscation
++  CryptoUtils.cpp
++  Utils.cpp
++  ObfuscationPassManager.cpp
++  ObfuscationOptions.cpp
++  IndirectBranch.cpp
++  IndirectCall.cpp
++  IndirectGlobalVariable.cpp
++  Flattening.cpp
++  StringEncryption.cpp
++  LegacyLowerSwitch.cpp
++  
++  ADDITIONAL_HEADER_DIRS
++  ${LLVM_MAIN_INCLUDE_DIR}/llvm/Transforms/Obfuscation
++  
++  DEPENDS
++  LLVMLinker
++  )
++
++add_dependencies(LLVMObfuscation intrinsics_gen LLVMLinker)
+diff --git "a/llvm/lib/Transforms/Obfuscation/CryptoUtils.cpp" "b/llvm/lib/Transforms/Obfuscation/CryptoUtils.cpp"
+new file mode 100644
+index 0000000..63b3eb1
+--- /dev/null
++++ "b/llvm/lib/Transforms/Obfuscation/CryptoUtils.cpp"
+@@ -0,0 +1,1138 @@
++//===- CryptoUtils.cpp - AES-based Pseudo-Random Generator ----------------===//
++//
++//                     The LLVM Compiler Infrastructure
++//
++// This file is distributed under the University of Illinois Open Source
++// License. See LICENSE.TXT for details.
++//
++//===----------------------------------------------------------------------===//
++//
++// This file implements an AES-CTR-based cryptographically secure
++// pseudo-random generator.
++//
++// Created on: June 22, 2012
++// Last modification: November 15, 2013
++// Author(s): jrinaldini, pjunod
++//
++//===----------------------------------------------------------------------===//
++
++#include "llvm/Support/ManagedStatic.h"
++#include "llvm/Support/ErrorHandling.h"
++#include "llvm/Support/raw_ostream.h"
++#include "llvm/Support/Debug.h"
++#include "llvm/IR/LLVMContext.h"
++#include "llvm/ADT/Twine.h"
++#include "llvm/ADT/Statistic.h"
++#include "llvm/CryptoUtils.h"
++
++#include <string>
++#include <cstdlib>
++#include <cassert>
++#include <cstring>
++
++#ifdef _WIN32
++#include <random>
++#include <chrono>
++#endif
++
++// Stats
++#define DEBUG_TYPE "CryptoUtils"
++STATISTIC(statsGetBytes, "a. Number of calls to get_bytes ()");
++STATISTIC(statsGetChar, "b. Number of calls to get_char ()");
++STATISTIC(statsGetUint8, "c. Number of calls to get_uint8_t ()");
++STATISTIC(statsGetUint32, "d. Number of calls to get_uint32_t ()");
++STATISTIC(statsGetUint64, "e. Number of calls to get_uint64_t ()");
++STATISTIC(statsGetRange, "f. Number of calls to get_range ()");
++STATISTIC(statsPopulate, "g. Number of calls to populate ()");
++STATISTIC(statsAESEncrypt, "h. Number of calls to aes_encrypt ()");
++
++using namespace llvm;
++
++namespace llvm {
++ManagedStatic<CryptoUtils> cryptoutils;
++}
++
++const uint32_t AES_RCON[10] = { 0x01000000UL, 0x02000000UL, 0x04000000UL,
++                                0x08000000UL, 0x10000000UL, 0x20000000UL,
++                                0x40000000UL, 0x80000000UL, 0x1b000000UL,
++                                0x36000000UL };
++
++const uint32_t AES_PRECOMP_TE0[256] = {
++  0xc66363a5UL, 0xf87c7c84UL, 0xee777799UL, 0xf67b7b8dUL, 0xfff2f20dUL,
++  0xd66b6bbdUL, 0xde6f6fb1UL, 0x91c5c554UL, 0x60303050UL, 0x02010103UL,
++  0xce6767a9UL, 0x562b2b7dUL, 0xe7fefe19UL, 0xb5d7d762UL, 0x4dababe6UL,
++  0xec76769aUL, 0x8fcaca45UL, 0x1f82829dUL, 0x89c9c940UL, 0xfa7d7d87UL,
++  0xeffafa15UL, 0xb25959ebUL, 0x8e4747c9UL, 0xfbf0f00bUL, 0x41adadecUL,
++  0xb3d4d467UL, 0x5fa2a2fdUL, 0x45afafeaUL, 0x239c9cbfUL, 0x53a4a4f7UL,
++  0xe4727296UL, 0x9bc0c05bUL, 0x75b7b7c2UL, 0xe1fdfd1cUL, 0x3d9393aeUL,
++  0x4c26266aUL, 0x6c36365aUL, 0x7e3f3f41UL, 0xf5f7f702UL, 0x83cccc4fUL,
++  0x6834345cUL, 0x51a5a5f4UL, 0xd1e5e534UL, 0xf9f1f108UL, 0xe2717193UL,
++  0xabd8d873UL, 0x62313153UL, 0x2a15153fUL, 0x0804040cUL, 0x95c7c752UL,
++  0x46232365UL, 0x9dc3c35eUL, 0x30181828UL, 0x379696a1UL, 0x0a05050fUL,
++  0x2f9a9ab5UL, 0x0e070709UL, 0x24121236UL, 0x1b80809bUL, 0xdfe2e23dUL,
++  0xcdebeb26UL, 0x4e272769UL, 0x7fb2b2cdUL, 0xea75759fUL, 0x1209091bUL,
++  0x1d83839eUL, 0x582c2c74UL, 0x341a1a2eUL, 0x361b1b2dUL, 0xdc6e6eb2UL,
++  0xb45a5aeeUL, 0x5ba0a0fbUL, 0xa45252f6UL, 0x763b3b4dUL, 0xb7d6d661UL,
++  0x7db3b3ceUL, 0x5229297bUL, 0xdde3e33eUL, 0x5e2f2f71UL, 0x13848497UL,
++  0xa65353f5UL, 0xb9d1d168UL, 0x00000000UL, 0xc1eded2cUL, 0x40202060UL,
++  0xe3fcfc1fUL, 0x79b1b1c8UL, 0xb65b5bedUL, 0xd46a6abeUL, 0x8dcbcb46UL,
++  0x67bebed9UL, 0x7239394bUL, 0x944a4adeUL, 0x984c4cd4UL, 0xb05858e8UL,
++  0x85cfcf4aUL, 0xbbd0d06bUL, 0xc5efef2aUL, 0x4faaaae5UL, 0xedfbfb16UL,
++  0x864343c5UL, 0x9a4d4dd7UL, 0x66333355UL, 0x11858594UL, 0x8a4545cfUL,
++  0xe9f9f910UL, 0x04020206UL, 0xfe7f7f81UL, 0xa05050f0UL, 0x783c3c44UL,
++  0x259f9fbaUL, 0x4ba8a8e3UL, 0xa25151f3UL, 0x5da3a3feUL, 0x804040c0UL,
++  0x058f8f8aUL, 0x3f9292adUL, 0x219d9dbcUL, 0x70383848UL, 0xf1f5f504UL,
++  0x63bcbcdfUL, 0x77b6b6c1UL, 0xafdada75UL, 0x42212163UL, 0x20101030UL,
++  0xe5ffff1aUL, 0xfdf3f30eUL, 0xbfd2d26dUL, 0x81cdcd4cUL, 0x180c0c14UL,
++  0x26131335UL, 0xc3ecec2fUL, 0xbe5f5fe1UL, 0x359797a2UL, 0x884444ccUL,
++  0x2e171739UL, 0x93c4c457UL, 0x55a7a7f2UL, 0xfc7e7e82UL, 0x7a3d3d47UL,
++  0xc86464acUL, 0xba5d5de7UL, 0x3219192bUL, 0xe6737395UL, 0xc06060a0UL,
++  0x19818198UL, 0x9e4f4fd1UL, 0xa3dcdc7fUL, 0x44222266UL, 0x542a2a7eUL,
++  0x3b9090abUL, 0x0b888883UL, 0x8c4646caUL, 0xc7eeee29UL, 0x6bb8b8d3UL,
++  0x2814143cUL, 0xa7dede79UL, 0xbc5e5ee2UL, 0x160b0b1dUL, 0xaddbdb76UL,
++  0xdbe0e03bUL, 0x64323256UL, 0x743a3a4eUL, 0x140a0a1eUL, 0x924949dbUL,
++  0x0c06060aUL, 0x4824246cUL, 0xb85c5ce4UL, 0x9fc2c25dUL, 0xbdd3d36eUL,
++  0x43acacefUL, 0xc46262a6UL, 0x399191a8UL, 0x319595a4UL, 0xd3e4e437UL,
++  0xf279798bUL, 0xd5e7e732UL, 0x8bc8c843UL, 0x6e373759UL, 0xda6d6db7UL,
++  0x018d8d8cUL, 0xb1d5d564UL, 0x9c4e4ed2UL, 0x49a9a9e0UL, 0xd86c6cb4UL,
++  0xac5656faUL, 0xf3f4f407UL, 0xcfeaea25UL, 0xca6565afUL, 0xf47a7a8eUL,
++  0x47aeaee9UL, 0x10080818UL, 0x6fbabad5UL, 0xf0787888UL, 0x4a25256fUL,
++  0x5c2e2e72UL, 0x381c1c24UL, 0x57a6a6f1UL, 0x73b4b4c7UL, 0x97c6c651UL,
++  0xcbe8e823UL, 0xa1dddd7cUL, 0xe874749cUL, 0x3e1f1f21UL, 0x964b4bddUL,
++  0x61bdbddcUL, 0x0d8b8b86UL, 0x0f8a8a85UL, 0xe0707090UL, 0x7c3e3e42UL,
++  0x71b5b5c4UL, 0xcc6666aaUL, 0x904848d8UL, 0x06030305UL, 0xf7f6f601UL,
++  0x1c0e0e12UL, 0xc26161a3UL, 0x6a35355fUL, 0xae5757f9UL, 0x69b9b9d0UL,
++  0x17868691UL, 0x99c1c158UL, 0x3a1d1d27UL, 0x279e9eb9UL, 0xd9e1e138UL,
++  0xebf8f813UL, 0x2b9898b3UL, 0x22111133UL, 0xd26969bbUL, 0xa9d9d970UL,
++  0x078e8e89UL, 0x339494a7UL, 0x2d9b9bb6UL, 0x3c1e1e22UL, 0x15878792UL,
++  0xc9e9e920UL, 0x87cece49UL, 0xaa5555ffUL, 0x50282878UL, 0xa5dfdf7aUL,
++  0x038c8c8fUL, 0x59a1a1f8UL, 0x09898980UL, 0x1a0d0d17UL, 0x65bfbfdaUL,
++  0xd7e6e631UL, 0x844242c6UL, 0xd06868b8UL, 0x824141c3UL, 0x299999b0UL,
++  0x5a2d2d77UL, 0x1e0f0f11UL, 0x7bb0b0cbUL, 0xa85454fcUL, 0x6dbbbbd6UL,
++  0x2c16163aUL
++};
++
++const uint32_t AES_PRECOMP_TE1[256] = {
++  0xa5c66363UL, 0x84f87c7cUL, 0x99ee7777UL, 0x8df67b7bUL, 0x0dfff2f2UL,
++  0xbdd66b6bUL, 0xb1de6f6fUL, 0x5491c5c5UL, 0x50603030UL, 0x03020101UL,
++  0xa9ce6767UL, 0x7d562b2bUL, 0x19e7fefeUL, 0x62b5d7d7UL, 0xe64dababUL,
++  0x9aec7676UL, 0x458fcacaUL, 0x9d1f8282UL, 0x4089c9c9UL, 0x87fa7d7dUL,
++  0x15effafaUL, 0xebb25959UL, 0xc98e4747UL, 0x0bfbf0f0UL, 0xec41adadUL,
++  0x67b3d4d4UL, 0xfd5fa2a2UL, 0xea45afafUL, 0xbf239c9cUL, 0xf753a4a4UL,
++  0x96e47272UL, 0x5b9bc0c0UL, 0xc275b7b7UL, 0x1ce1fdfdUL, 0xae3d9393UL,
++  0x6a4c2626UL, 0x5a6c3636UL, 0x417e3f3fUL, 0x02f5f7f7UL, 0x4f83ccccUL,
++  0x5c683434UL, 0xf451a5a5UL, 0x34d1e5e5UL, 0x08f9f1f1UL, 0x93e27171UL,
++  0x73abd8d8UL, 0x53623131UL, 0x3f2a1515UL, 0x0c080404UL, 0x5295c7c7UL,
++  0x65462323UL, 0x5e9dc3c3UL, 0x28301818UL, 0xa1379696UL, 0x0f0a0505UL,
++  0xb52f9a9aUL, 0x090e0707UL, 0x36241212UL, 0x9b1b8080UL, 0x3ddfe2e2UL,
++  0x26cdebebUL, 0x694e2727UL, 0xcd7fb2b2UL, 0x9fea7575UL, 0x1b120909UL,
++  0x9e1d8383UL, 0x74582c2cUL, 0x2e341a1aUL, 0x2d361b1bUL, 0xb2dc6e6eUL,
++  0xeeb45a5aUL, 0xfb5ba0a0UL, 0xf6a45252UL, 0x4d763b3bUL, 0x61b7d6d6UL,
++  0xce7db3b3UL, 0x7b522929UL, 0x3edde3e3UL, 0x715e2f2fUL, 0x97138484UL,
++  0xf5a65353UL, 0x68b9d1d1UL, 0x00000000UL, 0x2cc1ededUL, 0x60402020UL,
++  0x1fe3fcfcUL, 0xc879b1b1UL, 0xedb65b5bUL, 0xbed46a6aUL, 0x468dcbcbUL,
++  0xd967bebeUL, 0x4b723939UL, 0xde944a4aUL, 0xd4984c4cUL, 0xe8b05858UL,
++  0x4a85cfcfUL, 0x6bbbd0d0UL, 0x2ac5efefUL, 0xe54faaaaUL, 0x16edfbfbUL,
++  0xc5864343UL, 0xd79a4d4dUL, 0x55663333UL, 0x94118585UL, 0xcf8a4545UL,
++  0x10e9f9f9UL, 0x06040202UL, 0x81fe7f7fUL, 0xf0a05050UL, 0x44783c3cUL,
++  0xba259f9fUL, 0xe34ba8a8UL, 0xf3a25151UL, 0xfe5da3a3UL, 0xc0804040UL,
++  0x8a058f8fUL, 0xad3f9292UL, 0xbc219d9dUL, 0x48703838UL, 0x04f1f5f5UL,
++  0xdf63bcbcUL, 0xc177b6b6UL, 0x75afdadaUL, 0x63422121UL, 0x30201010UL,
++  0x1ae5ffffUL, 0x0efdf3f3UL, 0x6dbfd2d2UL, 0x4c81cdcdUL, 0x14180c0cUL,
++  0x35261313UL, 0x2fc3ececUL, 0xe1be5f5fUL, 0xa2359797UL, 0xcc884444UL,
++  0x392e1717UL, 0x5793c4c4UL, 0xf255a7a7UL, 0x82fc7e7eUL, 0x477a3d3dUL,
++  0xacc86464UL, 0xe7ba5d5dUL, 0x2b321919UL, 0x95e67373UL, 0xa0c06060UL,
++  0x98198181UL, 0xd19e4f4fUL, 0x7fa3dcdcUL, 0x66442222UL, 0x7e542a2aUL,
++  0xab3b9090UL, 0x830b8888UL, 0xca8c4646UL, 0x29c7eeeeUL, 0xd36bb8b8UL,
++  0x3c281414UL, 0x79a7dedeUL, 0xe2bc5e5eUL, 0x1d160b0bUL, 0x76addbdbUL,
++  0x3bdbe0e0UL, 0x56643232UL, 0x4e743a3aUL, 0x1e140a0aUL, 0xdb924949UL,
++  0x0a0c0606UL, 0x6c482424UL, 0xe4b85c5cUL, 0x5d9fc2c2UL, 0x6ebdd3d3UL,
++  0xef43acacUL, 0xa6c46262UL, 0xa8399191UL, 0xa4319595UL, 0x37d3e4e4UL,
++  0x8bf27979UL, 0x32d5e7e7UL, 0x438bc8c8UL, 0x596e3737UL, 0xb7da6d6dUL,
++  0x8c018d8dUL, 0x64b1d5d5UL, 0xd29c4e4eUL, 0xe049a9a9UL, 0xb4d86c6cUL,
++  0xfaac5656UL, 0x07f3f4f4UL, 0x25cfeaeaUL, 0xafca6565UL, 0x8ef47a7aUL,
++  0xe947aeaeUL, 0x18100808UL, 0xd56fbabaUL, 0x88f07878UL, 0x6f4a2525UL,
++  0x725c2e2eUL, 0x24381c1cUL, 0xf157a6a6UL, 0xc773b4b4UL, 0x5197c6c6UL,
++  0x23cbe8e8UL, 0x7ca1ddddUL, 0x9ce87474UL, 0x213e1f1fUL, 0xdd964b4bUL,
++  0xdc61bdbdUL, 0x860d8b8bUL, 0x850f8a8aUL, 0x90e07070UL, 0x427c3e3eUL,
++  0xc471b5b5UL, 0xaacc6666UL, 0xd8904848UL, 0x05060303UL, 0x01f7f6f6UL,
++  0x121c0e0eUL, 0xa3c26161UL, 0x5f6a3535UL, 0xf9ae5757UL, 0xd069b9b9UL,
++  0x91178686UL, 0x5899c1c1UL, 0x273a1d1dUL, 0xb9279e9eUL, 0x38d9e1e1UL,
++  0x13ebf8f8UL, 0xb32b9898UL, 0x33221111UL, 0xbbd26969UL, 0x70a9d9d9UL,
++  0x89078e8eUL, 0xa7339494UL, 0xb62d9b9bUL, 0x223c1e1eUL, 0x92158787UL,
++  0x20c9e9e9UL, 0x4987ceceUL, 0xffaa5555UL, 0x78502828UL, 0x7aa5dfdfUL,
++  0x8f038c8cUL, 0xf859a1a1UL, 0x80098989UL, 0x171a0d0dUL, 0xda65bfbfUL,
++  0x31d7e6e6UL, 0xc6844242UL, 0xb8d06868UL, 0xc3824141UL, 0xb0299999UL,
++  0x775a2d2dUL, 0x111e0f0fUL, 0xcb7bb0b0UL, 0xfca85454UL, 0xd66dbbbbUL,
++  0x3a2c1616UL
++};
++
++const uint32_t AES_PRECOMP_TE2[256] = {
++  0x63a5c663UL, 0x7c84f87cUL, 0x7799ee77UL, 0x7b8df67bUL, 0xf20dfff2UL,
++  0x6bbdd66bUL, 0x6fb1de6fUL, 0xc55491c5UL, 0x30506030UL, 0x01030201UL,
++  0x67a9ce67UL, 0x2b7d562bUL, 0xfe19e7feUL, 0xd762b5d7UL, 0xabe64dabUL,
++  0x769aec76UL, 0xca458fcaUL, 0x829d1f82UL, 0xc94089c9UL, 0x7d87fa7dUL,
++  0xfa15effaUL, 0x59ebb259UL, 0x47c98e47UL, 0xf00bfbf0UL, 0xadec41adUL,
++  0xd467b3d4UL, 0xa2fd5fa2UL, 0xafea45afUL, 0x9cbf239cUL, 0xa4f753a4UL,
++  0x7296e472UL, 0xc05b9bc0UL, 0xb7c275b7UL, 0xfd1ce1fdUL, 0x93ae3d93UL,
++  0x266a4c26UL, 0x365a6c36UL, 0x3f417e3fUL, 0xf702f5f7UL, 0xcc4f83ccUL,
++  0x345c6834UL, 0xa5f451a5UL, 0xe534d1e5UL, 0xf108f9f1UL, 0x7193e271UL,
++  0xd873abd8UL, 0x31536231UL, 0x153f2a15UL, 0x040c0804UL, 0xc75295c7UL,
++  0x23654623UL, 0xc35e9dc3UL, 0x18283018UL, 0x96a13796UL, 0x050f0a05UL,
++  0x9ab52f9aUL, 0x07090e07UL, 0x12362412UL, 0x809b1b80UL, 0xe23ddfe2UL,
++  0xeb26cdebUL, 0x27694e27UL, 0xb2cd7fb2UL, 0x759fea75UL, 0x091b1209UL,
++  0x839e1d83UL, 0x2c74582cUL, 0x1a2e341aUL, 0x1b2d361bUL, 0x6eb2dc6eUL,
++  0x5aeeb45aUL, 0xa0fb5ba0UL, 0x52f6a452UL, 0x3b4d763bUL, 0xd661b7d6UL,
++  0xb3ce7db3UL, 0x297b5229UL, 0xe33edde3UL, 0x2f715e2fUL, 0x84971384UL,
++  0x53f5a653UL, 0xd168b9d1UL, 0x00000000UL, 0xed2cc1edUL, 0x20604020UL,
++  0xfc1fe3fcUL, 0xb1c879b1UL, 0x5bedb65bUL, 0x6abed46aUL, 0xcb468dcbUL,
++  0xbed967beUL, 0x394b7239UL, 0x4ade944aUL, 0x4cd4984cUL, 0x58e8b058UL,
++  0xcf4a85cfUL, 0xd06bbbd0UL, 0xef2ac5efUL, 0xaae54faaUL, 0xfb16edfbUL,
++  0x43c58643UL, 0x4dd79a4dUL, 0x33556633UL, 0x85941185UL, 0x45cf8a45UL,
++  0xf910e9f9UL, 0x02060402UL, 0x7f81fe7fUL, 0x50f0a050UL, 0x3c44783cUL,
++  0x9fba259fUL, 0xa8e34ba8UL, 0x51f3a251UL, 0xa3fe5da3UL, 0x40c08040UL,
++  0x8f8a058fUL, 0x92ad3f92UL, 0x9dbc219dUL, 0x38487038UL, 0xf504f1f5UL,
++  0xbcdf63bcUL, 0xb6c177b6UL, 0xda75afdaUL, 0x21634221UL, 0x10302010UL,
++  0xff1ae5ffUL, 0xf30efdf3UL, 0xd26dbfd2UL, 0xcd4c81cdUL, 0x0c14180cUL,
++  0x13352613UL, 0xec2fc3ecUL, 0x5fe1be5fUL, 0x97a23597UL, 0x44cc8844UL,
++  0x17392e17UL, 0xc45793c4UL, 0xa7f255a7UL, 0x7e82fc7eUL, 0x3d477a3dUL,
++  0x64acc864UL, 0x5de7ba5dUL, 0x192b3219UL, 0x7395e673UL, 0x60a0c060UL,
++  0x81981981UL, 0x4fd19e4fUL, 0xdc7fa3dcUL, 0x22664422UL, 0x2a7e542aUL,
++  0x90ab3b90UL, 0x88830b88UL, 0x46ca8c46UL, 0xee29c7eeUL, 0xb8d36bb8UL,
++  0x143c2814UL, 0xde79a7deUL, 0x5ee2bc5eUL, 0x0b1d160bUL, 0xdb76addbUL,
++  0xe03bdbe0UL, 0x32566432UL, 0x3a4e743aUL, 0x0a1e140aUL, 0x49db9249UL,
++  0x060a0c06UL, 0x246c4824UL, 0x5ce4b85cUL, 0xc25d9fc2UL, 0xd36ebdd3UL,
++  0xacef43acUL, 0x62a6c462UL, 0x91a83991UL, 0x95a43195UL, 0xe437d3e4UL,
++  0x798bf279UL, 0xe732d5e7UL, 0xc8438bc8UL, 0x37596e37UL, 0x6db7da6dUL,
++  0x8d8c018dUL, 0xd564b1d5UL, 0x4ed29c4eUL, 0xa9e049a9UL, 0x6cb4d86cUL,
++  0x56faac56UL, 0xf407f3f4UL, 0xea25cfeaUL, 0x65afca65UL, 0x7a8ef47aUL,
++  0xaee947aeUL, 0x08181008UL, 0xbad56fbaUL, 0x7888f078UL, 0x256f4a25UL,
++  0x2e725c2eUL, 0x1c24381cUL, 0xa6f157a6UL, 0xb4c773b4UL, 0xc65197c6UL,
++  0xe823cbe8UL, 0xdd7ca1ddUL, 0x749ce874UL, 0x1f213e1fUL, 0x4bdd964bUL,
++  0xbddc61bdUL, 0x8b860d8bUL, 0x8a850f8aUL, 0x7090e070UL, 0x3e427c3eUL,
++  0xb5c471b5UL, 0x66aacc66UL, 0x48d89048UL, 0x03050603UL, 0xf601f7f6UL,
++  0x0e121c0eUL, 0x61a3c261UL, 0x355f6a35UL, 0x57f9ae57UL, 0xb9d069b9UL,
++  0x86911786UL, 0xc15899c1UL, 0x1d273a1dUL, 0x9eb9279eUL, 0xe138d9e1UL,
++  0xf813ebf8UL, 0x98b32b98UL, 0x11332211UL, 0x69bbd269UL, 0xd970a9d9UL,
++  0x8e89078eUL, 0x94a73394UL, 0x9bb62d9bUL, 0x1e223c1eUL, 0x87921587UL,
++  0xe920c9e9UL, 0xce4987ceUL, 0x55ffaa55UL, 0x28785028UL, 0xdf7aa5dfUL,
++  0x8c8f038cUL, 0xa1f859a1UL, 0x89800989UL, 0x0d171a0dUL, 0xbfda65bfUL,
++  0xe631d7e6UL, 0x42c68442UL, 0x68b8d068UL, 0x41c38241UL, 0x99b02999UL,
++  0x2d775a2dUL, 0x0f111e0fUL, 0xb0cb7bb0UL, 0x54fca854UL, 0xbbd66dbbUL,
++  0x163a2c16UL
++};
++
++const uint32_t AES_PRECOMP_TE3[256] = {
++  0x6363a5c6UL, 0x7c7c84f8UL, 0x777799eeUL, 0x7b7b8df6UL, 0xf2f20dffUL,
++  0x6b6bbdd6UL, 0x6f6fb1deUL, 0xc5c55491UL, 0x30305060UL, 0x01010302UL,
++  0x6767a9ceUL, 0x2b2b7d56UL, 0xfefe19e7UL, 0xd7d762b5UL, 0xababe64dUL,
++  0x76769aecUL, 0xcaca458fUL, 0x82829d1fUL, 0xc9c94089UL, 0x7d7d87faUL,
++  0xfafa15efUL, 0x5959ebb2UL, 0x4747c98eUL, 0xf0f00bfbUL, 0xadadec41UL,
++  0xd4d467b3UL, 0xa2a2fd5fUL, 0xafafea45UL, 0x9c9cbf23UL, 0xa4a4f753UL,
++  0x727296e4UL, 0xc0c05b9bUL, 0xb7b7c275UL, 0xfdfd1ce1UL, 0x9393ae3dUL,
++  0x26266a4cUL, 0x36365a6cUL, 0x3f3f417eUL, 0xf7f702f5UL, 0xcccc4f83UL,
++  0x34345c68UL, 0xa5a5f451UL, 0xe5e534d1UL, 0xf1f108f9UL, 0x717193e2UL,
++  0xd8d873abUL, 0x31315362UL, 0x15153f2aUL, 0x04040c08UL, 0xc7c75295UL,
++  0x23236546UL, 0xc3c35e9dUL, 0x18182830UL, 0x9696a137UL, 0x05050f0aUL,
++  0x9a9ab52fUL, 0x0707090eUL, 0x12123624UL, 0x80809b1bUL, 0xe2e23ddfUL,
++  0xebeb26cdUL, 0x2727694eUL, 0xb2b2cd7fUL, 0x75759feaUL, 0x09091b12UL,
++  0x83839e1dUL, 0x2c2c7458UL, 0x1a1a2e34UL, 0x1b1b2d36UL, 0x6e6eb2dcUL,
++  0x5a5aeeb4UL, 0xa0a0fb5bUL, 0x5252f6a4UL, 0x3b3b4d76UL, 0xd6d661b7UL,
++  0xb3b3ce7dUL, 0x29297b52UL, 0xe3e33eddUL, 0x2f2f715eUL, 0x84849713UL,
++  0x5353f5a6UL, 0xd1d168b9UL, 0x00000000UL, 0xeded2cc1UL, 0x20206040UL,
++  0xfcfc1fe3UL, 0xb1b1c879UL, 0x5b5bedb6UL, 0x6a6abed4UL, 0xcbcb468dUL,
++  0xbebed967UL, 0x39394b72UL, 0x4a4ade94UL, 0x4c4cd498UL, 0x5858e8b0UL,
++  0xcfcf4a85UL, 0xd0d06bbbUL, 0xefef2ac5UL, 0xaaaae54fUL, 0xfbfb16edUL,
++  0x4343c586UL, 0x4d4dd79aUL, 0x33335566UL, 0x85859411UL, 0x4545cf8aUL,
++  0xf9f910e9UL, 0x02020604UL, 0x7f7f81feUL, 0x5050f0a0UL, 0x3c3c4478UL,
++  0x9f9fba25UL, 0xa8a8e34bUL, 0x5151f3a2UL, 0xa3a3fe5dUL, 0x4040c080UL,
++  0x8f8f8a05UL, 0x9292ad3fUL, 0x9d9dbc21UL, 0x38384870UL, 0xf5f504f1UL,
++  0xbcbcdf63UL, 0xb6b6c177UL, 0xdada75afUL, 0x21216342UL, 0x10103020UL,
++  0xffff1ae5UL, 0xf3f30efdUL, 0xd2d26dbfUL, 0xcdcd4c81UL, 0x0c0c1418UL,
++  0x13133526UL, 0xecec2fc3UL, 0x5f5fe1beUL, 0x9797a235UL, 0x4444cc88UL,
++  0x1717392eUL, 0xc4c45793UL, 0xa7a7f255UL, 0x7e7e82fcUL, 0x3d3d477aUL,
++  0x6464acc8UL, 0x5d5de7baUL, 0x19192b32UL, 0x737395e6UL, 0x6060a0c0UL,
++  0x81819819UL, 0x4f4fd19eUL, 0xdcdc7fa3UL, 0x22226644UL, 0x2a2a7e54UL,
++  0x9090ab3bUL, 0x8888830bUL, 0x4646ca8cUL, 0xeeee29c7UL, 0xb8b8d36bUL,
++  0x14143c28UL, 0xdede79a7UL, 0x5e5ee2bcUL, 0x0b0b1d16UL, 0xdbdb76adUL,
++  0xe0e03bdbUL, 0x32325664UL, 0x3a3a4e74UL, 0x0a0a1e14UL, 0x4949db92UL,
++  0x06060a0cUL, 0x24246c48UL, 0x5c5ce4b8UL, 0xc2c25d9fUL, 0xd3d36ebdUL,
++  0xacacef43UL, 0x6262a6c4UL, 0x9191a839UL, 0x9595a431UL, 0xe4e437d3UL,
++  0x79798bf2UL, 0xe7e732d5UL, 0xc8c8438bUL, 0x3737596eUL, 0x6d6db7daUL,
++  0x8d8d8c01UL, 0xd5d564b1UL, 0x4e4ed29cUL, 0xa9a9e049UL, 0x6c6cb4d8UL,
++  0x5656faacUL, 0xf4f407f3UL, 0xeaea25cfUL, 0x6565afcaUL, 0x7a7a8ef4UL,
++  0xaeaee947UL, 0x08081810UL, 0xbabad56fUL, 0x787888f0UL, 0x25256f4aUL,
++  0x2e2e725cUL, 0x1c1c2438UL, 0xa6a6f157UL, 0xb4b4c773UL, 0xc6c65197UL,
++  0xe8e823cbUL, 0xdddd7ca1UL, 0x74749ce8UL, 0x1f1f213eUL, 0x4b4bdd96UL,
++  0xbdbddc61UL, 0x8b8b860dUL, 0x8a8a850fUL, 0x707090e0UL, 0x3e3e427cUL,
++  0xb5b5c471UL, 0x6666aaccUL, 0x4848d890UL, 0x03030506UL, 0xf6f601f7UL,
++  0x0e0e121cUL, 0x6161a3c2UL, 0x35355f6aUL, 0x5757f9aeUL, 0xb9b9d069UL,
++  0x86869117UL, 0xc1c15899UL, 0x1d1d273aUL, 0x9e9eb927UL, 0xe1e138d9UL,
++  0xf8f813ebUL, 0x9898b32bUL, 0x11113322UL, 0x6969bbd2UL, 0xd9d970a9UL,
++  0x8e8e8907UL, 0x9494a733UL, 0x9b9bb62dUL, 0x1e1e223cUL, 0x87879215UL,
++  0xe9e920c9UL, 0xcece4987UL, 0x5555ffaaUL, 0x28287850UL, 0xdfdf7aa5UL,
++  0x8c8c8f03UL, 0xa1a1f859UL, 0x89898009UL, 0x0d0d171aUL, 0xbfbfda65UL,
++  0xe6e631d7UL, 0x4242c684UL, 0x6868b8d0UL, 0x4141c382UL, 0x9999b029UL,
++  0x2d2d775aUL, 0x0f0f111eUL, 0xb0b0cb7bUL, 0x5454fca8UL, 0xbbbbd66dUL,
++  0x16163a2cUL
++};
++
++const uint32_t AES_PRECOMP_TE4_0[256] = {
++  0x00000063UL, 0x0000007cUL, 0x00000077UL, 0x0000007bUL, 0x000000f2UL,
++  0x0000006bUL, 0x0000006fUL, 0x000000c5UL, 0x00000030UL, 0x00000001UL,
++  0x00000067UL, 0x0000002bUL, 0x000000feUL, 0x000000d7UL, 0x000000abUL,
++  0x00000076UL, 0x000000caUL, 0x00000082UL, 0x000000c9UL, 0x0000007dUL,
++  0x000000faUL, 0x00000059UL, 0x00000047UL, 0x000000f0UL, 0x000000adUL,
++  0x000000d4UL, 0x000000a2UL, 0x000000afUL, 0x0000009cUL, 0x000000a4UL,
++  0x00000072UL, 0x000000c0UL, 0x000000b7UL, 0x000000fdUL, 0x00000093UL,
++  0x00000026UL, 0x00000036UL, 0x0000003fUL, 0x000000f7UL, 0x000000ccUL,
++  0x00000034UL, 0x000000a5UL, 0x000000e5UL, 0x000000f1UL, 0x00000071UL,
++  0x000000d8UL, 0x00000031UL, 0x00000015UL, 0x00000004UL, 0x000000c7UL,
++  0x00000023UL, 0x000000c3UL, 0x00000018UL, 0x00000096UL, 0x00000005UL,
++  0x0000009aUL, 0x00000007UL, 0x00000012UL, 0x00000080UL, 0x000000e2UL,
++  0x000000ebUL, 0x00000027UL, 0x000000b2UL, 0x00000075UL, 0x00000009UL,
++  0x00000083UL, 0x0000002cUL, 0x0000001aUL, 0x0000001bUL, 0x0000006eUL,
++  0x0000005aUL, 0x000000a0UL, 0x00000052UL, 0x0000003bUL, 0x000000d6UL,
++  0x000000b3UL, 0x00000029UL, 0x000000e3UL, 0x0000002fUL, 0x00000084UL,
++  0x00000053UL, 0x000000d1UL, 0x00000000UL, 0x000000edUL, 0x00000020UL,
++  0x000000fcUL, 0x000000b1UL, 0x0000005bUL, 0x0000006aUL, 0x000000cbUL,
++  0x000000beUL, 0x00000039UL, 0x0000004aUL, 0x0000004cUL, 0x00000058UL,
++  0x000000cfUL, 0x000000d0UL, 0x000000efUL, 0x000000aaUL, 0x000000fbUL,
++  0x00000043UL, 0x0000004dUL, 0x00000033UL, 0x00000085UL, 0x00000045UL,
++  0x000000f9UL, 0x00000002UL, 0x0000007fUL, 0x00000050UL, 0x0000003cUL,
++  0x0000009fUL, 0x000000a8UL, 0x00000051UL, 0x000000a3UL, 0x00000040UL,
++  0x0000008fUL, 0x00000092UL, 0x0000009dUL, 0x00000038UL, 0x000000f5UL,
++  0x000000bcUL, 0x000000b6UL, 0x000000daUL, 0x00000021UL, 0x00000010UL,
++  0x000000ffUL, 0x000000f3UL, 0x000000d2UL, 0x000000cdUL, 0x0000000cUL,
++  0x00000013UL, 0x000000ecUL, 0x0000005fUL, 0x00000097UL, 0x00000044UL,
++  0x00000017UL, 0x000000c4UL, 0x000000a7UL, 0x0000007eUL, 0x0000003dUL,
++  0x00000064UL, 0x0000005dUL, 0x00000019UL, 0x00000073UL, 0x00000060UL,
++  0x00000081UL, 0x0000004fUL, 0x000000dcUL, 0x00000022UL, 0x0000002aUL,
++  0x00000090UL, 0x00000088UL, 0x00000046UL, 0x000000eeUL, 0x000000b8UL,
++  0x00000014UL, 0x000000deUL, 0x0000005eUL, 0x0000000bUL, 0x000000dbUL,
++  0x000000e0UL, 0x00000032UL, 0x0000003aUL, 0x0000000aUL, 0x00000049UL,
++  0x00000006UL, 0x00000024UL, 0x0000005cUL, 0x000000c2UL, 0x000000d3UL,
++  0x000000acUL, 0x00000062UL, 0x00000091UL, 0x00000095UL, 0x000000e4UL,
++  0x00000079UL, 0x000000e7UL, 0x000000c8UL, 0x00000037UL, 0x0000006dUL,
++  0x0000008dUL, 0x000000d5UL, 0x0000004eUL, 0x000000a9UL, 0x0000006cUL,
++  0x00000056UL, 0x000000f4UL, 0x000000eaUL, 0x00000065UL, 0x0000007aUL,
++  0x000000aeUL, 0x00000008UL, 0x000000baUL, 0x00000078UL, 0x00000025UL,
++  0x0000002eUL, 0x0000001cUL, 0x000000a6UL, 0x000000b4UL, 0x000000c6UL,
++  0x000000e8UL, 0x000000ddUL, 0x00000074UL, 0x0000001fUL, 0x0000004bUL,
++  0x000000bdUL, 0x0000008bUL, 0x0000008aUL, 0x00000070UL, 0x0000003eUL,
++  0x000000b5UL, 0x00000066UL, 0x00000048UL, 0x00000003UL, 0x000000f6UL,
++  0x0000000eUL, 0x00000061UL, 0x00000035UL, 0x00000057UL, 0x000000b9UL,
++  0x00000086UL, 0x000000c1UL, 0x0000001dUL, 0x0000009eUL, 0x000000e1UL,
++  0x000000f8UL, 0x00000098UL, 0x00000011UL, 0x00000069UL, 0x000000d9UL,
++  0x0000008eUL, 0x00000094UL, 0x0000009bUL, 0x0000001eUL, 0x00000087UL,
++  0x000000e9UL, 0x000000ceUL, 0x00000055UL, 0x00000028UL, 0x000000dfUL,
++  0x0000008cUL, 0x000000a1UL, 0x00000089UL, 0x0000000dUL, 0x000000bfUL,
++  0x000000e6UL, 0x00000042UL, 0x00000068UL, 0x00000041UL, 0x00000099UL,
++  0x0000002dUL, 0x0000000fUL, 0x000000b0UL, 0x00000054UL, 0x000000bbUL,
++  0x00000016UL
++};
++
++const uint32_t AES_PRECOMP_TE4_1[256] = {
++  0x00006300UL, 0x00007c00UL, 0x00007700UL, 0x00007b00UL, 0x0000f200UL,
++  0x00006b00UL, 0x00006f00UL, 0x0000c500UL, 0x00003000UL, 0x00000100UL,
++  0x00006700UL, 0x00002b00UL, 0x0000fe00UL, 0x0000d700UL, 0x0000ab00UL,
++  0x00007600UL, 0x0000ca00UL, 0x00008200UL, 0x0000c900UL, 0x00007d00UL,
++  0x0000fa00UL, 0x00005900UL, 0x00004700UL, 0x0000f000UL, 0x0000ad00UL,
++  0x0000d400UL, 0x0000a200UL, 0x0000af00UL, 0x00009c00UL, 0x0000a400UL,
++  0x00007200UL, 0x0000c000UL, 0x0000b700UL, 0x0000fd00UL, 0x00009300UL,
++  0x00002600UL, 0x00003600UL, 0x00003f00UL, 0x0000f700UL, 0x0000cc00UL,
++  0x00003400UL, 0x0000a500UL, 0x0000e500UL, 0x0000f100UL, 0x00007100UL,
++  0x0000d800UL, 0x00003100UL, 0x00001500UL, 0x00000400UL, 0x0000c700UL,
++  0x00002300UL, 0x0000c300UL, 0x00001800UL, 0x00009600UL, 0x00000500UL,
++  0x00009a00UL, 0x00000700UL, 0x00001200UL, 0x00008000UL, 0x0000e200UL,
++  0x0000eb00UL, 0x00002700UL, 0x0000b200UL, 0x00007500UL, 0x00000900UL,
++  0x00008300UL, 0x00002c00UL, 0x00001a00UL, 0x00001b00UL, 0x00006e00UL,
++  0x00005a00UL, 0x0000a000UL, 0x00005200UL, 0x00003b00UL, 0x0000d600UL,
++  0x0000b300UL, 0x00002900UL, 0x0000e300UL, 0x00002f00UL, 0x00008400UL,
++  0x00005300UL, 0x0000d100UL, 0x00000000UL, 0x0000ed00UL, 0x00002000UL,
++  0x0000fc00UL, 0x0000b100UL, 0x00005b00UL, 0x00006a00UL, 0x0000cb00UL,
++  0x0000be00UL, 0x00003900UL, 0x00004a00UL, 0x00004c00UL, 0x00005800UL,
++  0x0000cf00UL, 0x0000d000UL, 0x0000ef00UL, 0x0000aa00UL, 0x0000fb00UL,
++  0x00004300UL, 0x00004d00UL, 0x00003300UL, 0x00008500UL, 0x00004500UL,
++  0x0000f900UL, 0x00000200UL, 0x00007f00UL, 0x00005000UL, 0x00003c00UL,
++  0x00009f00UL, 0x0000a800UL, 0x00005100UL, 0x0000a300UL, 0x00004000UL,
++  0x00008f00UL, 0x00009200UL, 0x00009d00UL, 0x00003800UL, 0x0000f500UL,
++  0x0000bc00UL, 0x0000b600UL, 0x0000da00UL, 0x00002100UL, 0x00001000UL,
++  0x0000ff00UL, 0x0000f300UL, 0x0000d200UL, 0x0000cd00UL, 0x00000c00UL,
++  0x00001300UL, 0x0000ec00UL, 0x00005f00UL, 0x00009700UL, 0x00004400UL,
++  0x00001700UL, 0x0000c400UL, 0x0000a700UL, 0x00007e00UL, 0x00003d00UL,
++  0x00006400UL, 0x00005d00UL, 0x00001900UL, 0x00007300UL, 0x00006000UL,
++  0x00008100UL, 0x00004f00UL, 0x0000dc00UL, 0x00002200UL, 0x00002a00UL,
++  0x00009000UL, 0x00008800UL, 0x00004600UL, 0x0000ee00UL, 0x0000b800UL,
++  0x00001400UL, 0x0000de00UL, 0x00005e00UL, 0x00000b00UL, 0x0000db00UL,
++  0x0000e000UL, 0x00003200UL, 0x00003a00UL, 0x00000a00UL, 0x00004900UL,
++  0x00000600UL, 0x00002400UL, 0x00005c00UL, 0x0000c200UL, 0x0000d300UL,
++  0x0000ac00UL, 0x00006200UL, 0x00009100UL, 0x00009500UL, 0x0000e400UL,
++  0x00007900UL, 0x0000e700UL, 0x0000c800UL, 0x00003700UL, 0x00006d00UL,
++  0x00008d00UL, 0x0000d500UL, 0x00004e00UL, 0x0000a900UL, 0x00006c00UL,
++  0x00005600UL, 0x0000f400UL, 0x0000ea00UL, 0x00006500UL, 0x00007a00UL,
++  0x0000ae00UL, 0x00000800UL, 0x0000ba00UL, 0x00007800UL, 0x00002500UL,
++  0x00002e00UL, 0x00001c00UL, 0x0000a600UL, 0x0000b400UL, 0x0000c600UL,
++  0x0000e800UL, 0x0000dd00UL, 0x00007400UL, 0x00001f00UL, 0x00004b00UL,
++  0x0000bd00UL, 0x00008b00UL, 0x00008a00UL, 0x00007000UL, 0x00003e00UL,
++  0x0000b500UL, 0x00006600UL, 0x00004800UL, 0x00000300UL, 0x0000f600UL,
++  0x00000e00UL, 0x00006100UL, 0x00003500UL, 0x00005700UL, 0x0000b900UL,
++  0x00008600UL, 0x0000c100UL, 0x00001d00UL, 0x00009e00UL, 0x0000e100UL,
++  0x0000f800UL, 0x00009800UL, 0x00001100UL, 0x00006900UL, 0x0000d900UL,
++  0x00008e00UL, 0x00009400UL, 0x00009b00UL, 0x00001e00UL, 0x00008700UL,
++  0x0000e900UL, 0x0000ce00UL, 0x00005500UL, 0x00002800UL, 0x0000df00UL,
++  0x00008c00UL, 0x0000a100UL, 0x00008900UL, 0x00000d00UL, 0x0000bf00UL,
++  0x0000e600UL, 0x00004200UL, 0x00006800UL, 0x00004100UL, 0x00009900UL,
++  0x00002d00UL, 0x00000f00UL, 0x0000b000UL, 0x00005400UL, 0x0000bb00UL,
++  0x00001600UL
++};
++
++const uint32_t AES_PRECOMP_TE4_2[256] = {
++  0x00630000UL, 0x007c0000UL, 0x00770000UL, 0x007b0000UL, 0x00f20000UL,
++  0x006b0000UL, 0x006f0000UL, 0x00c50000UL, 0x00300000UL, 0x00010000UL,
++  0x00670000UL, 0x002b0000UL, 0x00fe0000UL, 0x00d70000UL, 0x00ab0000UL,
++  0x00760000UL, 0x00ca0000UL, 0x00820000UL, 0x00c90000UL, 0x007d0000UL,
++  0x00fa0000UL, 0x00590000UL, 0x00470000UL, 0x00f00000UL, 0x00ad0000UL,
++  0x00d40000UL, 0x00a20000UL, 0x00af0000UL, 0x009c0000UL, 0x00a40000UL,
++  0x00720000UL, 0x00c00000UL, 0x00b70000UL, 0x00fd0000UL, 0x00930000UL,
++  0x00260000UL, 0x00360000UL, 0x003f0000UL, 0x00f70000UL, 0x00cc0000UL,
++  0x00340000UL, 0x00a50000UL, 0x00e50000UL, 0x00f10000UL, 0x00710000UL,
++  0x00d80000UL, 0x00310000UL, 0x00150000UL, 0x00040000UL, 0x00c70000UL,
++  0x00230000UL, 0x00c30000UL, 0x00180000UL, 0x00960000UL, 0x00050000UL,
++  0x009a0000UL, 0x00070000UL, 0x00120000UL, 0x00800000UL, 0x00e20000UL,
++  0x00eb0000UL, 0x00270000UL, 0x00b20000UL, 0x00750000UL, 0x00090000UL,
++  0x00830000UL, 0x002c0000UL, 0x001a0000UL, 0x001b0000UL, 0x006e0000UL,
++  0x005a0000UL, 0x00a00000UL, 0x00520000UL, 0x003b0000UL, 0x00d60000UL,
++  0x00b30000UL, 0x00290000UL, 0x00e30000UL, 0x002f0000UL, 0x00840000UL,
++  0x00530000UL, 0x00d10000UL, 0x00000000UL, 0x00ed0000UL, 0x00200000UL,
++  0x00fc0000UL, 0x00b10000UL, 0x005b0000UL, 0x006a0000UL, 0x00cb0000UL,
++  0x00be0000UL, 0x00390000UL, 0x004a0000UL, 0x004c0000UL, 0x00580000UL,
++  0x00cf0000UL, 0x00d00000UL, 0x00ef0000UL, 0x00aa0000UL, 0x00fb0000UL,
++  0x00430000UL, 0x004d0000UL, 0x00330000UL, 0x00850000UL, 0x00450000UL,
++  0x00f90000UL, 0x00020000UL, 0x007f0000UL, 0x00500000UL, 0x003c0000UL,
++  0x009f0000UL, 0x00a80000UL, 0x00510000UL, 0x00a30000UL, 0x00400000UL,
++  0x008f0000UL, 0x00920000UL, 0x009d0000UL, 0x00380000UL, 0x00f50000UL,
++  0x00bc0000UL, 0x00b60000UL, 0x00da0000UL, 0x00210000UL, 0x00100000UL,
++  0x00ff0000UL, 0x00f30000UL, 0x00d20000UL, 0x00cd0000UL, 0x000c0000UL,
++  0x00130000UL, 0x00ec0000UL, 0x005f0000UL, 0x00970000UL, 0x00440000UL,
++  0x00170000UL, 0x00c40000UL, 0x00a70000UL, 0x007e0000UL, 0x003d0000UL,
++  0x00640000UL, 0x005d0000UL, 0x00190000UL, 0x00730000UL, 0x00600000UL,
++  0x00810000UL, 0x004f0000UL, 0x00dc0000UL, 0x00220000UL, 0x002a0000UL,
++  0x00900000UL, 0x00880000UL, 0x00460000UL, 0x00ee0000UL, 0x00b80000UL,
++  0x00140000UL, 0x00de0000UL, 0x005e0000UL, 0x000b0000UL, 0x00db0000UL,
++  0x00e00000UL, 0x00320000UL, 0x003a0000UL, 0x000a0000UL, 0x00490000UL,
++  0x00060000UL, 0x00240000UL, 0x005c0000UL, 0x00c20000UL, 0x00d30000UL,
++  0x00ac0000UL, 0x00620000UL, 0x00910000UL, 0x00950000UL, 0x00e40000UL,
++  0x00790000UL, 0x00e70000UL, 0x00c80000UL, 0x00370000UL, 0x006d0000UL,
++  0x008d0000UL, 0x00d50000UL, 0x004e0000UL, 0x00a90000UL, 0x006c0000UL,
++  0x00560000UL, 0x00f40000UL, 0x00ea0000UL, 0x00650000UL, 0x007a0000UL,
++  0x00ae0000UL, 0x00080000UL, 0x00ba0000UL, 0x00780000UL, 0x00250000UL,
++  0x002e0000UL, 0x001c0000UL, 0x00a60000UL, 0x00b40000UL, 0x00c60000UL,
++  0x00e80000UL, 0x00dd0000UL, 0x00740000UL, 0x001f0000UL, 0x004b0000UL,
++  0x00bd0000UL, 0x008b0000UL, 0x008a0000UL, 0x00700000UL, 0x003e0000UL,
++  0x00b50000UL, 0x00660000UL, 0x00480000UL, 0x00030000UL, 0x00f60000UL,
++  0x000e0000UL, 0x00610000UL, 0x00350000UL, 0x00570000UL, 0x00b90000UL,
++  0x00860000UL, 0x00c10000UL, 0x001d0000UL, 0x009e0000UL, 0x00e10000UL,
++  0x00f80000UL, 0x00980000UL, 0x00110000UL, 0x00690000UL, 0x00d90000UL,
++  0x008e0000UL, 0x00940000UL, 0x009b0000UL, 0x001e0000UL, 0x00870000UL,
++  0x00e90000UL, 0x00ce0000UL, 0x00550000UL, 0x00280000UL, 0x00df0000UL,
++  0x008c0000UL, 0x00a10000UL, 0x00890000UL, 0x000d0000UL, 0x00bf0000UL,
++  0x00e60000UL, 0x00420000UL, 0x00680000UL, 0x00410000UL, 0x00990000UL,
++  0x002d0000UL, 0x000f0000UL, 0x00b00000UL, 0x00540000UL, 0x00bb0000UL,
++  0x00160000UL
++};
++
++const uint32_t AES_PRECOMP_TE4_3[256] = {
++  0x63000000UL, 0x7c000000UL, 0x77000000UL, 0x7b000000UL, 0xf2000000UL,
++  0x6b000000UL, 0x6f000000UL, 0xc5000000UL, 0x30000000UL, 0x01000000UL,
++  0x67000000UL, 0x2b000000UL, 0xfe000000UL, 0xd7000000UL, 0xab000000UL,
++  0x76000000UL, 0xca000000UL, 0x82000000UL, 0xc9000000UL, 0x7d000000UL,
++  0xfa000000UL, 0x59000000UL, 0x47000000UL, 0xf0000000UL, 0xad000000UL,
++  0xd4000000UL, 0xa2000000UL, 0xaf000000UL, 0x9c000000UL, 0xa4000000UL,
++  0x72000000UL, 0xc0000000UL, 0xb7000000UL, 0xfd000000UL, 0x93000000UL,
++  0x26000000UL, 0x36000000UL, 0x3f000000UL, 0xf7000000UL, 0xcc000000UL,
++  0x34000000UL, 0xa5000000UL, 0xe5000000UL, 0xf1000000UL, 0x71000000UL,
++  0xd8000000UL, 0x31000000UL, 0x15000000UL, 0x04000000UL, 0xc7000000UL,
++  0x23000000UL, 0xc3000000UL, 0x18000000UL, 0x96000000UL, 0x05000000UL,
++  0x9a000000UL, 0x07000000UL, 0x12000000UL, 0x80000000UL, 0xe2000000UL,
++  0xeb000000UL, 0x27000000UL, 0xb2000000UL, 0x75000000UL, 0x09000000UL,
++  0x83000000UL, 0x2c000000UL, 0x1a000000UL, 0x1b000000UL, 0x6e000000UL,
++  0x5a000000UL, 0xa0000000UL, 0x52000000UL, 0x3b000000UL, 0xd6000000UL,
++  0xb3000000UL, 0x29000000UL, 0xe3000000UL, 0x2f000000UL, 0x84000000UL,
++  0x53000000UL, 0xd1000000UL, 0x00000000UL, 0xed000000UL, 0x20000000UL,
++  0xfc000000UL, 0xb1000000UL, 0x5b000000UL, 0x6a000000UL, 0xcb000000UL,
++  0xbe000000UL, 0x39000000UL, 0x4a000000UL, 0x4c000000UL, 0x58000000UL,
++  0xcf000000UL, 0xd0000000UL, 0xef000000UL, 0xaa000000UL, 0xfb000000UL,
++  0x43000000UL, 0x4d000000UL, 0x33000000UL, 0x85000000UL, 0x45000000UL,
++  0xf9000000UL, 0x02000000UL, 0x7f000000UL, 0x50000000UL, 0x3c000000UL,
++  0x9f000000UL, 0xa8000000UL, 0x51000000UL, 0xa3000000UL, 0x40000000UL,
++  0x8f000000UL, 0x92000000UL, 0x9d000000UL, 0x38000000UL, 0xf5000000UL,
++  0xbc000000UL, 0xb6000000UL, 0xda000000UL, 0x21000000UL, 0x10000000UL,
++  0xff000000UL, 0xf3000000UL, 0xd2000000UL, 0xcd000000UL, 0x0c000000UL,
++  0x13000000UL, 0xec000000UL, 0x5f000000UL, 0x97000000UL, 0x44000000UL,
++  0x17000000UL, 0xc4000000UL, 0xa7000000UL, 0x7e000000UL, 0x3d000000UL,
++  0x64000000UL, 0x5d000000UL, 0x19000000UL, 0x73000000UL, 0x60000000UL,
++  0x81000000UL, 0x4f000000UL, 0xdc000000UL, 0x22000000UL, 0x2a000000UL,
++  0x90000000UL, 0x88000000UL, 0x46000000UL, 0xee000000UL, 0xb8000000UL,
++  0x14000000UL, 0xde000000UL, 0x5e000000UL, 0x0b000000UL, 0xdb000000UL,
++  0xe0000000UL, 0x32000000UL, 0x3a000000UL, 0x0a000000UL, 0x49000000UL,
++  0x06000000UL, 0x24000000UL, 0x5c000000UL, 0xc2000000UL, 0xd3000000UL,
++  0xac000000UL, 0x62000000UL, 0x91000000UL, 0x95000000UL, 0xe4000000UL,
++  0x79000000UL, 0xe7000000UL, 0xc8000000UL, 0x37000000UL, 0x6d000000UL,
++  0x8d000000UL, 0xd5000000UL, 0x4e000000UL, 0xa9000000UL, 0x6c000000UL,
++  0x56000000UL, 0xf4000000UL, 0xea000000UL, 0x65000000UL, 0x7a000000UL,
++  0xae000000UL, 0x08000000UL, 0xba000000UL, 0x78000000UL, 0x25000000UL,
++  0x2e000000UL, 0x1c000000UL, 0xa6000000UL, 0xb4000000UL, 0xc6000000UL,
++  0xe8000000UL, 0xdd000000UL, 0x74000000UL, 0x1f000000UL, 0x4b000000UL,
++  0xbd000000UL, 0x8b000000UL, 0x8a000000UL, 0x70000000UL, 0x3e000000UL,
++  0xb5000000UL, 0x66000000UL, 0x48000000UL, 0x03000000UL, 0xf6000000UL,
++  0x0e000000UL, 0x61000000UL, 0x35000000UL, 0x57000000UL, 0xb9000000UL,
++  0x86000000UL, 0xc1000000UL, 0x1d000000UL, 0x9e000000UL, 0xe1000000UL,
++  0xf8000000UL, 0x98000000UL, 0x11000000UL, 0x69000000UL, 0xd9000000UL,
++  0x8e000000UL, 0x94000000UL, 0x9b000000UL, 0x1e000000UL, 0x87000000UL,
++  0xe9000000UL, 0xce000000UL, 0x55000000UL, 0x28000000UL, 0xdf000000UL,
++  0x8c000000UL, 0xa1000000UL, 0x89000000UL, 0x0d000000UL, 0xbf000000UL,
++  0xe6000000UL, 0x42000000UL, 0x68000000UL, 0x41000000UL, 0x99000000UL,
++  0x2d000000UL, 0x0f000000UL, 0xb0000000UL, 0x54000000UL, 0xbb000000UL,
++  0x16000000UL
++};
++
++const uint32_t masks[32] = {
++  0x80000000UL, 0x40000000UL, 0x20000000UL, 0x10000000UL, 0x08000000UL,
++  0x04000000UL, 0x02000000UL, 0x01000000UL, 0x00800000UL, 0x00400000UL,
++  0x00200000UL, 0x00100000UL, 0x00080000UL, 0x00040000UL, 0x00020000UL,
++  0x00010000UL, 0x00008000UL, 0x00004000UL, 0x00002000UL, 0x00001000UL,
++  0x00000800UL, 0x00000400UL, 0x00000200UL, 0x00000100UL, 0x00000080UL,
++  0x00000040UL, 0x00000020UL, 0x00000010UL, 0x00000008UL, 0x00000004UL,
++  0x00000002UL, 0x00000001UL
++};
++
++CryptoUtils::CryptoUtils() { seeded = false; }
++
++unsigned CryptoUtils::scramble32(const unsigned in, const char key[16]) {
++  assert(key != NULL && "CryptoUtils::scramble key=NULL");
++
++  unsigned tmpA, tmpB;
++
++  // Orr, Nathan or Adi can probably break it, but who cares?
++
++  // Round 1
++  tmpA = 0x0;
++  tmpA ^= AES_PRECOMP_TE0[((in >> 24) ^ key[0]) & 0xFF];
++  tmpA ^= AES_PRECOMP_TE1[((in >> 16) ^ key[1]) & 0xFF];
++  tmpA ^= AES_PRECOMP_TE2[((in >> 8) ^ key[2]) & 0xFF];
++  tmpA ^= AES_PRECOMP_TE3[((in >> 0) ^ key[3]) & 0xFF];
++
++  // Round 2
++  tmpB = 0x0;
++  tmpB ^= AES_PRECOMP_TE0[((tmpA >> 24) ^ key[4]) & 0xFF];
++  tmpB ^= AES_PRECOMP_TE1[((tmpA >> 16) ^ key[5]) & 0xFF];
++  tmpB ^= AES_PRECOMP_TE2[((tmpA >> 8) ^ key[6]) & 0xFF];
++  tmpB ^= AES_PRECOMP_TE3[((tmpA >> 0) ^ key[7]) & 0xFF];
++
++  // Round 3
++  tmpA = 0x0;
++  tmpA ^= AES_PRECOMP_TE0[((tmpB >> 24) ^ key[8]) & 0xFF];
++  tmpA ^= AES_PRECOMP_TE1[((tmpB >> 16) ^ key[9]) & 0xFF];
++  tmpA ^= AES_PRECOMP_TE2[((tmpB >> 8) ^ key[10]) & 0xFF];
++  tmpA ^= AES_PRECOMP_TE3[((tmpB >> 0) ^ key[11]) & 0xFF];
++
++  // Round 4
++  tmpB = 0x0;
++  tmpB ^= AES_PRECOMP_TE0[((tmpA >> 24) ^ key[12]) & 0xFF];
++  tmpB ^= AES_PRECOMP_TE1[((tmpA >> 16) ^ key[13]) & 0xFF];
++  tmpB ^= AES_PRECOMP_TE2[((tmpA >> 8) ^ key[14]) & 0xFF];
++  tmpB ^= AES_PRECOMP_TE3[((tmpA >> 0) ^ key[15]) & 0xFF];
++
++  LOAD32H(tmpA, key);
++
++  return tmpA ^ tmpB;
++}
++
++unsigned long long CryptoUtils::scramble64(const unsigned in, const char key[16])
++{
++  assert(key != NULL && "CryptoUtils::scramble key=NULL");
++
++  unsigned long long tmpA, tmpB;
++
++  // Orr, Nathan or Adi can probably break it, but who cares?
++
++  // Round 1
++  tmpA = 0x0;
++  tmpA ^= AES_PRECOMP_TE0[((in >> 24) ^ key[0]) & 0xFF];
++  tmpA ^= AES_PRECOMP_TE1[((in >> 16) ^ key[1]) & 0xFF];
++  tmpA ^= AES_PRECOMP_TE2[((in >> 8) ^ key[2]) & 0xFF];
++  tmpA ^= AES_PRECOMP_TE3[((in >> 0) ^ key[3]) & 0xFF];
++
++  // Round 2
++  tmpB = 0x0;
++  tmpB ^= AES_PRECOMP_TE0[((tmpA >> 24) ^ key[4]) & 0xFF];
++  tmpB ^= AES_PRECOMP_TE1[((tmpA >> 16) ^ key[5]) & 0xFF];
++  tmpB ^= AES_PRECOMP_TE2[((tmpA >> 8) ^ key[6]) & 0xFF];
++  tmpB ^= AES_PRECOMP_TE3[((tmpA >> 0) ^ key[7]) & 0xFF];
++
++  // Round 3
++  tmpA = 0x0;
++  tmpA ^= AES_PRECOMP_TE0[((tmpB >> 24) ^ key[8]) & 0xFF];
++  tmpA ^= AES_PRECOMP_TE1[((tmpB >> 16) ^ key[9]) & 0xFF];
++  tmpA ^= AES_PRECOMP_TE2[((tmpB >> 8) ^ key[10]) & 0xFF];
++  tmpA ^= AES_PRECOMP_TE3[((tmpB >> 0) ^ key[11]) & 0xFF];
++
++  // Round 4
++  tmpB = 0x0;
++  tmpB ^= AES_PRECOMP_TE0[((tmpA >> 24) ^ key[12]) & 0xFF];
++  tmpB ^= AES_PRECOMP_TE1[((tmpA >> 16) ^ key[13]) & 0xFF];
++  tmpB ^= AES_PRECOMP_TE2[((tmpA >> 8) ^ key[14]) & 0xFF];
++  tmpB ^= AES_PRECOMP_TE3[((tmpA >> 0) ^ key[15]) & 0xFF];
++
++  LOAD64H(tmpA, key);
++
++  return tmpA ^ tmpB;
++}
++
++void CryptoUtils::prng_seed(const std::string _seed) {
++  unsigned char s[16];
++  unsigned int i = 0;
++
++  /* We accept a prefix "0x" */
++  if (!(_seed.size() == 32 || _seed.size() == 34)) {
++    errs() <<
++        Twine("The AES-CTR PRNG seeding mechanism is expecting a 16-byte value "
++              "expressed in hexadecimal, like DEAD....BEEF");
++  }
++
++  seed = _seed;
++
++  if (_seed.size() == 34) {
++    // Assuming that the two first characters are "0x"
++    i = 2;
++  }
++
++  for (; i < _seed.length(); i += 2) {
++    std::string byte = _seed.substr(i, 2);
++    s[i >> 1] = (unsigned char)(int)strtol(byte.c_str(), NULL, 16);
++  }
++
++  // _seed is defined to be the
++  // key initial value
++  memcpy(key, s, 16);
++  DEBUG_WITH_TYPE("cryptoutils", dbgs() << "CPNRG seeded with " << _seed << "\n");
++
++  // ctr is initialized to all-zeroes
++  memset(ctr, 0, 16);
++
++  // Once the seed is there, we compute the
++  // AES128 key-schedule
++  aes_compute_ks(ks, key);
++
++  seeded = true;
++
++  // We are now ready to fill the pool with
++  // cryptographically secure pseudo-random
++  // values.
++  populate_pool();
++}
++
++CryptoUtils::~CryptoUtils() {
++  // Some wiping work here
++  memset(key, 0, 16);
++  memset(ks, 0, 44 * sizeof(uint32_t));
++  memset(ctr, 0, 16);
++  memset(pool, 0, CryptoUtils_POOL_SIZE);
++
++  idx = 0;
++}
++
++void CryptoUtils::populate_pool() {
++
++  statsPopulate++;
++
++  for (int i = 0; i < CryptoUtils_POOL_SIZE; i += 16) {
++
++    // ctr += 1
++    inc_ctr();
++
++    // We then encrypt the counter
++    aes_encrypt(pool + i, ctr, ks);
++  }
++
++  // Reinitializing the index of the first
++  // available pseudo-random byte
++  idx = 0;
++}
++
++void CryptoUtils::prng_seed() {
++#ifdef _WIN32
++  std::mt19937 mt(std::chrono::system_clock::now().time_since_epoch().count());
++  for (size_t i = 0; i < 4; i++)
++  {
++    ((int*)key)[i] = mt();
++  }
++  memset(ctr, 0, 16);
++
++  // Once the seed is there, we compute the
++  // AES128 key-schedule
++  aes_compute_ks(ks, key);
++  seeded = true;
++#else
++#if defined(__linux__)
++  std::ifstream devrandom("/dev/urandom");
++#else
++  std::ifstream devrandom("/dev/random");
++#endif
++
++  if (devrandom) {
++
++    devrandom.read(key, 16);
++
++    if (devrandom.gcount() != 16) {
++      errs() << Twine("Cannot read enough bytes in /dev/random");
++    }
++
++    devrandom.close();
++    DEBUG_WITH_TYPE("cryptoutils", dbgs() << "cryptoutils seeded with /dev/random\n");
++
++    memset(ctr, 0, 16);
++
++    // Once the seed is there, we compute the
++    // AES128 key-schedule
++    aes_compute_ks(ks, key);
++
++    seeded = true;
++  } else {
++    errs() << Twine("Cannot open /dev/random");
++  }
++#endif
++}
++
++void CryptoUtils::inc_ctr() {
++  uint64_t iseed;
++
++  LOAD64H(iseed, ctr + 8);
++  ++iseed;
++  STORE64H(ctr + 8, iseed);
++}
++
++char *CryptoUtils::get_seed() {
++
++  if (seeded) {
++    return key;
++  } else {
++    return NULL;
++  }
++}
++
++void CryptoUtils::get_bytes(char *buffer, const int len) {
++
++  int sofar = 0, available = 0;
++
++  assert(buffer != NULL && "CryptoUtils::get_bytes buffer=NULL");
++  assert(len > 0 && "CryptoUtils::get_bytes len <= 0");
++
++  statsGetBytes++;
++
++  if (len > 0) {
++
++    // If the PRNG is not seeded, it the very last time to do it !
++    if (!seeded) {
++      prng_seed();
++      populate_pool();
++    }
++
++    do {
++      if (idx + (len - sofar) >= CryptoUtils_POOL_SIZE) {
++        // We don't have enough bytes ready in the pool,
++        // so let's use the available ones and repopulate !
++        available = CryptoUtils_POOL_SIZE - idx;
++        memcpy(buffer + sofar, pool + idx, available);
++        sofar += available;
++        populate_pool();
++      } else {
++        memcpy(buffer + sofar, pool + idx, len - sofar);
++        idx += len - sofar;
++        // This will trigger a loop exit
++        sofar = len;
++      }
++    } while (sofar < (len - 1));
++  }
++}
++
++uint8_t CryptoUtils::get_uint8_t() {
++  char ret;
++
++  statsGetUint8++;
++
++  get_bytes(&ret, 1);
++
++  return (uint8_t)ret;
++}
++
++char CryptoUtils::get_char() {
++  char ret;
++
++  statsGetChar++;
++
++  get_bytes(&ret, 1);
++
++  return ret;
++}
++
++uint32_t CryptoUtils::get_uint32_t() {
++  char tmp[4];
++  uint32_t ret = 0;
++
++  statsGetUint32++;
++
++  get_bytes(tmp, 4);
++
++  LOAD32H(ret, tmp);
++
++  return ret;
++}
++
++uint64_t CryptoUtils::get_uint64_t() {
++  char tmp[8];
++  uint64_t ret = 0;
++
++  statsGetUint64++;
++
++  get_bytes(tmp, 8);
++
++  LOAD64H(ret, tmp);
++
++  return ret;
++}
++
++uint32_t CryptoUtils::get_range(const uint32_t max) {
++  uint32_t log, r, mask;
++
++  statsGetRange++;
++
++  if (max == 0) {
++    return 0;
++  } else {
++    // Computing the above power of two
++    log = 32;
++    int i = 0;
++    // This loop will terminate, as there is at least one
++    // bit set somewhere in max
++    while (!(max & masks[i++])) {
++      log -= 1;
++    }
++    mask = (0x1UL << log) - 1;
++
++    // This should loop two times in average
++    do {
++      r = get_uint32_t() & mask;
++    } while (r >= max);
++
++    return r;
++  }
++}
++
++void CryptoUtils::aes_compute_ks(uint32_t *ks, const char *k) {
++  int i;
++  uint32_t *p, tmp;
++
++  assert(ks != NULL);
++  assert(k != NULL);
++
++  LOAD32H(ks[0], k);
++  LOAD32H(ks[1], k + 4);
++  LOAD32H(ks[2], k + 8);
++  LOAD32H(ks[3], k + 12);
++
++  p = ks;
++  i = 0;
++  while (1) {
++    tmp = p[3];
++    tmp = ((AES_TE4_3(BYTE(tmp, 2))) ^ (AES_TE4_2(BYTE(tmp, 1))) ^
++           (AES_TE4_1(BYTE(tmp, 0))) ^ (AES_TE4_0(BYTE(tmp, 3))));
++
++    p[4] = p[0] ^ tmp ^ AES_RCON[i];
++    p[5] = p[1] ^ p[4];
++    p[6] = p[2] ^ p[5];
++    p[7] = p[3] ^ p[6];
++    if (++i == 10) {
++      break;
++    }
++    p += 4;
++  }
++}
++
++void CryptoUtils::aes_encrypt(char *out, const char *in, const uint32_t *ks) {
++  uint32_t state0 = 0, state1 = 0, state2 = 0, state3 = 0;
++  uint32_t tmp0, tmp1, tmp2, tmp3;
++  int i;
++  uint32_t r;
++
++  statsAESEncrypt++;
++
++  r = 0;
++  LOAD32H(state0, in + 0);
++  LOAD32H(state1, in + 4);
++  LOAD32H(state2, in + 8);
++  LOAD32H(state3, in + 12);
++
++  state0 ^= ks[r + 0];
++  state1 ^= ks[r + 1];
++  state2 ^= ks[r + 2];
++  state3 ^= ks[r + 3];
++
++  i = 0;
++  while (1) {
++    r += 4;
++
++    tmp0 = AES_TE0(BYTE(state0, 3)) ^ AES_TE1(BYTE(state1, 2)) ^
++           AES_TE2(BYTE(state2, 1)) ^ AES_TE3(BYTE(state3, 0)) ^ ks[r + 0];
++
++    tmp1 = AES_TE0(BYTE(state1, 3)) ^ AES_TE1(BYTE(state2, 2)) ^
++           AES_TE2(BYTE(state3, 1)) ^ AES_TE3(BYTE(state0, 0)) ^ ks[r + 1];
++
++    tmp2 = AES_TE0(BYTE(state2, 3)) ^ AES_TE1(BYTE(state3, 2)) ^
++           AES_TE2(BYTE(state0, 1)) ^ AES_TE3(BYTE(state1, 0)) ^ ks[r + 2];
++
++    tmp3 = AES_TE0(BYTE(state3, 3)) ^ AES_TE1(BYTE(state0, 2)) ^
++           AES_TE2(BYTE(state1, 1)) ^ AES_TE3(BYTE(state2, 0)) ^ ks[r + 3];
++
++    if (i == 8) {
++      break;
++    }
++    i++;
++    state0 = tmp0;
++    state1 = tmp1;
++    state2 = tmp2;
++    state3 = tmp3;
++  }
++
++  r += 4;
++  state0 = (AES_TE4_3(BYTE(tmp0, 3))) ^ (AES_TE4_2(BYTE(tmp1, 2))) ^
++           (AES_TE4_1(BYTE(tmp2, 1))) ^ (AES_TE4_0(BYTE(tmp3, 0))) ^ ks[r + 0];
++
++  state1 = (AES_TE4_3(BYTE(tmp1, 3))) ^ (AES_TE4_2(BYTE(tmp2, 2))) ^
++           (AES_TE4_1(BYTE(tmp3, 1))) ^ (AES_TE4_0(BYTE(tmp0, 0))) ^ ks[r + 1];
++
++  state2 = (AES_TE4_3(BYTE(tmp2, 3))) ^ (AES_TE4_2(BYTE(tmp3, 2))) ^
++           (AES_TE4_1(BYTE(tmp0, 1))) ^ (AES_TE4_0(BYTE(tmp1, 0))) ^ ks[r + 2];
++
++  state3 = (AES_TE4_3(BYTE(tmp3, 3))) ^ (AES_TE4_2(BYTE(tmp0, 2))) ^
++           (AES_TE4_1(BYTE(tmp1, 1))) ^ (AES_TE4_0(BYTE(tmp2, 0))) ^ ks[r + 3];
++
++  STORE32H(out + 0, state0);
++  STORE32H(out + 4, state1);
++  STORE32H(out + 8, state2);
++  STORE32H(out + 12, state3);
++}
++
++int CryptoUtils::sha256_process(sha256_state *md, const unsigned char *in,
++                                unsigned long inlen) {
++  unsigned long n;
++  int err;
++  assert(md != NULL && "CryptoUtils::sha256_process md=NULL");
++  assert(in != NULL && "CryptoUtils::sha256_process in=NULL");
++
++  if (md->curlen > sizeof(md->buf)) {
++    return 1;
++  }
++  while (inlen > 0) {
++    if (md->curlen == 0 && inlen >= 64) {
++      if ((err = sha256_compress(md, (unsigned char *)in)) != 0) {
++        return err;
++      }
++      md->length += 64 * 8;
++      in += 64;
++      inlen -= 64;
++    } else {
++      n = MIN(inlen, (64 - md->curlen));
++      memcpy(md->buf + md->curlen, in, (size_t)n);
++      md->curlen += n;
++      in += n;
++      inlen -= n;
++      if (md->curlen == 64) {
++        if ((err = sha256_compress(md, md->buf)) != 0) {
++          return err;
++        }
++        md->length += 8 * 64;
++        md->curlen = 0;
++      }
++    }
++  }
++  return 0;
++}
++
++int CryptoUtils::sha256_compress(sha256_state *md, unsigned char *buf) {
++  uint32_t S[8], W[64], t0, t1;
++  int i;
++
++  /* copy state into S */
++  for (i = 0; i < 8; i++) {
++    S[i] = md->state[i];
++  }
++
++  /* copy the state into 512-bits into W[0..15] */
++  for (i = 0; i < 16; i++) {
++    LOAD32H(W[i], buf + (4 * i));
++  }
++
++  /* fill W[16..63] */
++  for (i = 16; i < 64; i++) {
++    W[i] = Gamma1(W[i - 2]) + W[i - 7] + Gamma0(W[i - 15]) + W[i - 16];
++  }
++
++  /* Compress */
++
++  RND(S[0], S[1], S[2], S[3], S[4], S[5], S[6], S[7], 0, 0x428a2f98);
++  RND(S[7], S[0], S[1], S[2], S[3], S[4], S[5], S[6], 1, 0x71374491);
++  RND(S[6], S[7], S[0], S[1], S[2], S[3], S[4], S[5], 2, 0xb5c0fbcf);
++  RND(S[5], S[6], S[7], S[0], S[1], S[2], S[3], S[4], 3, 0xe9b5dba5);
++  RND(S[4], S[5], S[6], S[7], S[0], S[1], S[2], S[3], 4, 0x3956c25b);
++  RND(S[3], S[4], S[5], S[6], S[7], S[0], S[1], S[2], 5, 0x59f111f1);
++  RND(S[2], S[3], S[4], S[5], S[6], S[7], S[0], S[1], 6, 0x923f82a4);
++  RND(S[1], S[2], S[3], S[4], S[5], S[6], S[7], S[0], 7, 0xab1c5ed5);
++  RND(S[0], S[1], S[2], S[3], S[4], S[5], S[6], S[7], 8, 0xd807aa98);
++  RND(S[7], S[0], S[1], S[2], S[3], S[4], S[5], S[6], 9, 0x12835b01);
++  RND(S[6], S[7], S[0], S[1], S[2], S[3], S[4], S[5], 10, 0x243185be);
++  RND(S[5], S[6], S[7], S[0], S[1], S[2], S[3], S[4], 11, 0x550c7dc3);
++  RND(S[4], S[5], S[6], S[7], S[0], S[1], S[2], S[3], 12, 0x72be5d74);
++  RND(S[3], S[4], S[5], S[6], S[7], S[0], S[1], S[2], 13, 0x80deb1fe);
++  RND(S[2], S[3], S[4], S[5], S[6], S[7], S[0], S[1], 14, 0x9bdc06a7);
++  RND(S[1], S[2], S[3], S[4], S[5], S[6], S[7], S[0], 15, 0xc19bf174);
++  RND(S[0], S[1], S[2], S[3], S[4], S[5], S[6], S[7], 16, 0xe49b69c1);
++  RND(S[7], S[0], S[1], S[2], S[3], S[4], S[5], S[6], 17, 0xefbe4786);
++  RND(S[6], S[7], S[0], S[1], S[2], S[3], S[4], S[5], 18, 0x0fc19dc6);
++  RND(S[5], S[6], S[7], S[0], S[1], S[2], S[3], S[4], 19, 0x240ca1cc);
++  RND(S[4], S[5], S[6], S[7], S[0], S[1], S[2], S[3], 20, 0x2de92c6f);
++  RND(S[3], S[4], S[5], S[6], S[7], S[0], S[1], S[2], 21, 0x4a7484aa);
++  RND(S[2], S[3], S[4], S[5], S[6], S[7], S[0], S[1], 22, 0x5cb0a9dc);
++  RND(S[1], S[2], S[3], S[4], S[5], S[6], S[7], S[0], 23, 0x76f988da);
++  RND(S[0], S[1], S[2], S[3], S[4], S[5], S[6], S[7], 24, 0x983e5152);
++  RND(S[7], S[0], S[1], S[2], S[3], S[4], S[5], S[6], 25, 0xa831c66d);
++  RND(S[6], S[7], S[0], S[1], S[2], S[3], S[4], S[5], 26, 0xb00327c8);
++  RND(S[5], S[6], S[7], S[0], S[1], S[2], S[3], S[4], 27, 0xbf597fc7);
++  RND(S[4], S[5], S[6], S[7], S[0], S[1], S[2], S[3], 28, 0xc6e00bf3);
++  RND(S[3], S[4], S[5], S[6], S[7], S[0], S[1], S[2], 29, 0xd5a79147);
++  RND(S[2], S[3], S[4], S[5], S[6], S[7], S[0], S[1], 30, 0x06ca6351);
++  RND(S[1], S[2], S[3], S[4], S[5], S[6], S[7], S[0], 31, 0x14292967);
++  RND(S[0], S[1], S[2], S[3], S[4], S[5], S[6], S[7], 32, 0x27b70a85);
++  RND(S[7], S[0], S[1], S[2], S[3], S[4], S[5], S[6], 33, 0x2e1b2138);
++  RND(S[6], S[7], S[0], S[1], S[2], S[3], S[4], S[5], 34, 0x4d2c6dfc);
++  RND(S[5], S[6], S[7], S[0], S[1], S[2], S[3], S[4], 35, 0x53380d13);
++  RND(S[4], S[5], S[6], S[7], S[0], S[1], S[2], S[3], 36, 0x650a7354);
++  RND(S[3], S[4], S[5], S[6], S[7], S[0], S[1], S[2], 37, 0x766a0abb);
++  RND(S[2], S[3], S[4], S[5], S[6], S[7], S[0], S[1], 38, 0x81c2c92e);
++  RND(S[1], S[2], S[3], S[4], S[5], S[6], S[7], S[0], 39, 0x92722c85);
++  RND(S[0], S[1], S[2], S[3], S[4], S[5], S[6], S[7], 40, 0xa2bfe8a1);
++  RND(S[7], S[0], S[1], S[2], S[3], S[4], S[5], S[6], 41, 0xa81a664b);
++  RND(S[6], S[7], S[0], S[1], S[2], S[3], S[4], S[5], 42, 0xc24b8b70);
++  RND(S[5], S[6], S[7], S[0], S[1], S[2], S[3], S[4], 43, 0xc76c51a3);
++  RND(S[4], S[5], S[6], S[7], S[0], S[1], S[2], S[3], 44, 0xd192e819);
++  RND(S[3], S[4], S[5], S[6], S[7], S[0], S[1], S[2], 45, 0xd6990624);
++  RND(S[2], S[3], S[4], S[5], S[6], S[7], S[0], S[1], 46, 0xf40e3585);
++  RND(S[1], S[2], S[3], S[4], S[5], S[6], S[7], S[0], 47, 0x106aa070);
++  RND(S[0], S[1], S[2], S[3], S[4], S[5], S[6], S[7], 48, 0x19a4c116);
++  RND(S[7], S[0], S[1], S[2], S[3], S[4], S[5], S[6], 49, 0x1e376c08);
++  RND(S[6], S[7], S[0], S[1], S[2], S[3], S[4], S[5], 50, 0x2748774c);
++  RND(S[5], S[6], S[7], S[0], S[1], S[2], S[3], S[4], 51, 0x34b0bcb5);
++  RND(S[4], S[5], S[6], S[7], S[0], S[1], S[2], S[3], 52, 0x391c0cb3);
++  RND(S[3], S[4], S[5], S[6], S[7], S[0], S[1], S[2], 53, 0x4ed8aa4a);
++  RND(S[2], S[3], S[4], S[5], S[6], S[7], S[0], S[1], 54, 0x5b9cca4f);
++  RND(S[1], S[2], S[3], S[4], S[5], S[6], S[7], S[0], 55, 0x682e6ff3);
++  RND(S[0], S[1], S[2], S[3], S[4], S[5], S[6], S[7], 56, 0x748f82ee);
++  RND(S[7], S[0], S[1], S[2], S[3], S[4], S[5], S[6], 57, 0x78a5636f);
++  RND(S[6], S[7], S[0], S[1], S[2], S[3], S[4], S[5], 58, 0x84c87814);
++  RND(S[5], S[6], S[7], S[0], S[1], S[2], S[3], S[4], 59, 0x8cc70208);
++  RND(S[4], S[5], S[6], S[7], S[0], S[1], S[2], S[3], 60, 0x90befffa);
++  RND(S[3], S[4], S[5], S[6], S[7], S[0], S[1], S[2], 61, 0xa4506ceb);
++  RND(S[2], S[3], S[4], S[5], S[6], S[7], S[0], S[1], 62, 0xbef9a3f7);
++  RND(S[1], S[2], S[3], S[4], S[5], S[6], S[7], S[0], 63, 0xc67178f2);
++
++  /* feedback */
++  for (i = 0; i < 8; i++) {
++    md->state[i] = md->state[i] + S[i];
++  }
++  return 0;
++}
++
++/**
++   Initialize the hash state
++   @param md   The hash state you wish to initialize
++   @return CRYPT_OK if successful
++*/
++int CryptoUtils::sha256_init(sha256_state *md) {
++  assert(md != NULL && "CryptoUtils::sha256_init md=NULL");
++
++  md->curlen = 0;
++  md->length = 0;
++  md->state[0] = 0x6A09E667UL;
++  md->state[1] = 0xBB67AE85UL;
++  md->state[2] = 0x3C6EF372UL;
++  md->state[3] = 0xA54FF53AUL;
++  md->state[4] = 0x510E527FUL;
++  md->state[5] = 0x9B05688CUL;
++  md->state[6] = 0x1F83D9ABUL;
++  md->state[7] = 0x5BE0CD19UL;
++  return 0;
++}
++
++/**
++   Terminate the hash to get the digest
++   @param md  The hash state
++   @param out [out] The destination of the hash (32 bytes)
++   @return CRYPT_OK if successful
++*/
++int CryptoUtils::sha256_done(sha256_state *md, unsigned char *out) {
++  int i;
++
++  assert(md != NULL && "CryptoUtils::sha256_done md=NULL");
++  assert(out != NULL && "CryptoUtils::sha256_done out=NULL");
++
++  if (md->curlen >= sizeof(md->buf)) {
++    return 1;
++  }
++
++  /* increase the length of the message */
++  md->length += md->curlen * 8;
++
++  /* append the '1' bit */
++  md->buf[md->curlen++] = (unsigned char)0x80;
++
++  /* if the length is currently above 56 bytes we append zeros
++   * then compress.  Then we can fall back to padding zeros and length
++   * encoding like normal.
++   */
++  if (md->curlen > 56) {
++    while (md->curlen < 64) {
++      md->buf[md->curlen++] = (unsigned char)0;
++    }
++    sha256_compress(md, md->buf);
++    md->curlen = 0;
++  }
++
++  /* pad upto 56 bytes of zeroes */
++  while (md->curlen < 56) {
++    md->buf[md->curlen++] = (unsigned char)0;
++  }
++
++  /* store length */
++  STORE64H(md->buf + 56, md->length);
++  sha256_compress(md, md->buf);
++
++  /* copy output */
++  for (i = 0; i < 8; i++) {
++    STORE32H(out + (4 * i), md->state[i]);
++  }
++  return 0;
++}
++
++int CryptoUtils::sha256(const char *msg, unsigned char *hash) {
++  unsigned char tmp[32];
++  sha256_state md;
++
++  sha256_init(&md);
++  sha256_process(&md, (const unsigned char *)msg,
++                 (unsigned long)strlen((const char *)msg));
++  sha256_done(&md, tmp);
++
++  memcpy(hash, tmp, 32);
++  return 0;
++}
+diff --git "a/llvm/lib/Transforms/Obfuscation/Flattening.cpp" "b/llvm/lib/Transforms/Obfuscation/Flattening.cpp"
+new file mode 100644
+index 0000000..f4c660e
+--- /dev/null
++++ "b/llvm/lib/Transforms/Obfuscation/Flattening.cpp"
+@@ -0,0 +1,321 @@
++//===- Flattening.cpp - Flattening Obfuscation pass------------------------===//
++//
++//                     The LLVM Compiler Infrastructure
++//
++// This file is distributed under the University of Illinois Open Source
++// License. See LICENSE.TXT for details.
++//
++//===----------------------------------------------------------------------===//
++//
++// This file implements the flattening pass
++//
++//===----------------------------------------------------------------------===//
++
++#include "llvm/IR/Constants.h"
++#include "llvm/Transforms/Obfuscation/Flattening.h"
++#include "llvm/Transforms/Obfuscation/LegacyLowerSwitch.h"
++#include "llvm/Transforms/Obfuscation/Utils.h"
++#include "llvm/CryptoUtils.h"
++#include "llvm/ADT/Statistic.h"
++
++#define DEBUG_TYPE "flattening"
++
++using namespace std;
++using namespace llvm;
++
++// Stats
++STATISTIC(Flattened, "Functions flattened");
++
++namespace {
++struct Flattening : public FunctionPass {
++  unsigned pointerSize;
++  static char ID;  // Pass identification, replacement for typeid
++  bool flag;
++  
++  ObfuscationOptions *Options;
++  CryptoUtils RandomEngine;
++
++  Flattening(unsigned pointerSize) : FunctionPass(ID) {
++    this->pointerSize = pointerSize;
++    this->flag = false;
++    this->Options = nullptr;
++  }
++
++  Flattening(unsigned pointerSize, bool flag, ObfuscationOptions *Options) : FunctionPass(ID) {
++    this->pointerSize = pointerSize;
++    this->flag = flag;
++    this->Options = Options;
++  }
++
++  bool runOnFunction(Function &F);
++  bool flatten(Function *f);
++};
++}
++
++bool Flattening::runOnFunction(Function &F) {
++  Function *tmp = &F;
++  bool result = false;
++  // Do we obfuscate
++  if (toObfuscate(flag, tmp, "fla")) {
++    if (flatten(tmp)) {
++      ++Flattened;
++      result = true;
++    }
++  }
++
++  return result;
++}
++
++bool Flattening::flatten(Function *f) {
++  vector<BasicBlock *> origBB;
++  BasicBlock *loopEntry;
++  BasicBlock *loopEnd;
++  LoadInst *load;
++  SwitchInst *switchI;
++  AllocaInst *switchVar;
++
++  // SCRAMBLER
++  char scrambling_key[16];
++  llvm::cryptoutils->get_bytes(scrambling_key, 16);
++  // END OF SCRAMBLER
++
++  // Lower switch
++  FunctionPass *lower = createLegacyLowerSwitchPass();
++  lower->runOnFunction(*f);
++
++  // Save all original BB
++  for (Function::iterator i = f->begin(); i != f->end(); ++i) {
++    BasicBlock *tmp = &*i;
++    origBB.push_back(tmp);
++
++    BasicBlock *bb = &*i;
++    if (isa<InvokeInst>(bb->getTerminator())) {
++      return false;
++    }
++  }
++
++  // Nothing to flatten
++  if (origBB.size() <= 1) {
++    return false;
++  }
++
++  LLVMContext &Ctx = f->getContext();
++  IntegerType* intType = Type::getInt32Ty(Ctx);
++  if (pointerSize == 8) {
++    intType = Type::getInt64Ty(Ctx);
++  }
++
++  Value *MySecret = ConstantInt::get(intType, 0, true);
++
++  // Remove first BB
++  origBB.erase(origBB.begin());
++
++  // Get a pointer on the first BB
++  Function::iterator tmp = f->begin();  //++tmp;
++  BasicBlock *insert = &*tmp;
++
++  // If main begin with an if
++  BranchInst *br = NULL;
++  if (isa<BranchInst>(insert->getTerminator())) {
++    br = cast<BranchInst>(insert->getTerminator());
++  }
++
++  if ((br != NULL && br->isConditional()) ||
++      insert->getTerminator()->getNumSuccessors() > 1) {
++    BasicBlock::iterator i = insert->end();
++        --i;
++
++    if (insert->size() > 1) {
++      --i;
++    }
++
++    BasicBlock *tmpBB = insert->splitBasicBlock(i, "first");
++    origBB.insert(origBB.begin(), tmpBB);
++  }
++
++  // Remove jump
++  insert->getTerminator()->eraseFromParent();
++
++  // Create switch variable and set as it
++  switchVar =
++      new AllocaInst(intType, 0, "switchVar", insert);
++  if (pointerSize == 8) {
++    new StoreInst(
++      ConstantInt::get(intType,
++        llvm::cryptoutils->scramble64(0, scrambling_key)),
++      switchVar, insert);
++  } else {
++    new StoreInst(
++      ConstantInt::get(intType,
++        llvm::cryptoutils->scramble32(0, scrambling_key)),
++      switchVar, insert);
++  }
++
++  // Create main loop
++  loopEntry = BasicBlock::Create(f->getContext(), "loopEntry", f, insert);
++  loopEnd = BasicBlock::Create(f->getContext(), "loopEnd", f, insert);
++
++  load = new LoadInst(intType, switchVar, "switchVar", loopEntry);
++
++  // Move first BB on top
++  insert->moveBefore(loopEntry);
++  BranchInst::Create(loopEntry, insert);
++
++  // loopEnd jump to loopEntry
++  BranchInst::Create(loopEntry, loopEnd);
++
++  BasicBlock *swDefault =
++      BasicBlock::Create(f->getContext(), "switchDefault", f, loopEnd);
++  BranchInst::Create(loopEnd, swDefault);
++
++  // Create switch instruction itself and set condition
++  switchI = SwitchInst::Create(&*f->begin(), swDefault, 0, loopEntry);
++  switchI->setCondition(load);
++
++  // Remove branch jump from 1st BB and make a jump to the while
++  f->begin()->getTerminator()->eraseFromParent();
++
++  BranchInst::Create(loopEntry, &*f->begin());
++
++  // Put all BB in the switch
++  for (vector<BasicBlock *>::iterator b = origBB.begin(); b != origBB.end();
++       ++b) {
++    BasicBlock *i = *b;
++    ConstantInt *numCase = NULL;
++
++    // Move the BB inside the switch (only visual, no code logic)
++    i->moveBefore(loopEnd);
++
++    // Add case to switch
++    if (pointerSize == 8) {
++      numCase = cast<ConstantInt>(ConstantInt::get(
++          switchI->getCondition()->getType(),
++          llvm::cryptoutils->scramble64(switchI->getNumCases(), scrambling_key)));
++    } else {
++      numCase = cast<ConstantInt>(ConstantInt::get(
++        switchI->getCondition()->getType(),
++        llvm::cryptoutils->scramble32(switchI->getNumCases(), scrambling_key)));
++    }
++    switchI->addCase(numCase, i);
++  }
++
++  ConstantInt *Zero = ConstantInt::get(intType, 0);
++  // Recalculate switchVar
++  for (vector<BasicBlock *>::iterator b = origBB.begin(); b != origBB.end();
++       ++b) {
++    BasicBlock *i = *b;
++    ConstantInt *numCase = NULL;
++
++    // Ret BB
++    if (i->getTerminator()->getNumSuccessors() == 0) {
++      continue;
++    }
++
++    // If it's a non-conditional jump
++    if (i->getTerminator()->getNumSuccessors() == 1) {
++      // Get successor and delete terminator
++      BasicBlock *succ = i->getTerminator()->getSuccessor(0);
++      i->getTerminator()->eraseFromParent();
++
++      // Get next case
++      numCase = switchI->findCaseDest(succ);
++
++      // If next case == default case (switchDefault)
++      if (numCase == NULL) {
++        if (pointerSize == 8) {
++          numCase = cast<ConstantInt>(
++              ConstantInt::get(switchI->getCondition()->getType(),
++                               llvm::cryptoutils->scramble64(
++                                   switchI->getNumCases() - 1, scrambling_key)));
++        } else {
++          numCase = cast<ConstantInt>(
++            ConstantInt::get(switchI->getCondition()->getType(),
++              llvm::cryptoutils->scramble32(
++                switchI->getNumCases() - 1, scrambling_key)));
++        }
++      }
++
++      // numCase = MySecret - (MySecret - numCase)
++      // X = MySecret - numCase
++      Constant *X = ConstantExpr::getSub(Zero, numCase);
++      Value *newNumCase = BinaryOperator::Create(Instruction::Sub, MySecret, X, "", i);
++
++      // Update switchVar and jump to the end of loop
++      new StoreInst(newNumCase, load->getPointerOperand(), i);
++      BranchInst::Create(loopEnd, i);
++      continue;
++    }
++
++    // If it's a conditional jump
++    if (i->getTerminator()->getNumSuccessors() == 2) {
++      // Get next cases
++      ConstantInt *numCaseTrue =
++          switchI->findCaseDest(i->getTerminator()->getSuccessor(0));
++      ConstantInt *numCaseFalse =
++          switchI->findCaseDest(i->getTerminator()->getSuccessor(1));
++
++      // Check if next case == default case (switchDefault)
++      if (numCaseTrue == NULL) {
++        if (pointerSize == 8) {
++          numCaseTrue = cast<ConstantInt>(
++              ConstantInt::get(switchI->getCondition()->getType(),
++                               llvm::cryptoutils->scramble64(
++                                   switchI->getNumCases() - 1, scrambling_key)));
++        } else {
++          numCaseTrue = cast<ConstantInt>(
++            ConstantInt::get(switchI->getCondition()->getType(),
++              llvm::cryptoutils->scramble32(
++                switchI->getNumCases() - 1, scrambling_key)));
++        }
++      }
++
++      if (numCaseFalse == NULL) {
++        if (pointerSize == 8) {
++          numCaseFalse = cast<ConstantInt>(
++              ConstantInt::get(switchI->getCondition()->getType(),
++                               llvm::cryptoutils->scramble64(
++                                   switchI->getNumCases() - 1, scrambling_key)));
++        } else {
++          numCaseFalse = cast<ConstantInt>(
++            ConstantInt::get(switchI->getCondition()->getType(),
++              llvm::cryptoutils->scramble32(
++                switchI->getNumCases() - 1, scrambling_key)));
++        }
++      }
++
++      Constant *X, *Y;
++      X = ConstantExpr::getSub(Zero, numCaseTrue);
++      Y = ConstantExpr::getSub(Zero, numCaseFalse);
++      Value *newNumCaseTrue = BinaryOperator::Create(Instruction::Sub, MySecret, X, "", i->getTerminator());
++      Value *newNumCaseFalse = BinaryOperator::Create(Instruction::Sub, MySecret, Y, "", i->getTerminator());
++
++      // Create a SelectInst
++      BranchInst *br = cast<BranchInst>(i->getTerminator());
++      SelectInst *sel =
++          SelectInst::Create(br->getCondition(), newNumCaseTrue, newNumCaseFalse, "",
++                             i->getTerminator());
++
++      // Erase terminator
++      i->getTerminator()->eraseFromParent();
++
++      // Update switchVar and jump to the end of loop
++      new StoreInst(sel, load->getPointerOperand(), i);
++      BranchInst::Create(loopEnd, i);
++      continue;
++    }
++  }
++
++  fixStack(f);
++
++  lower->runOnFunction(*f);
++  delete(lower);
++
++  return true;
++}
++
++char Flattening::ID = 0;
++static RegisterPass<Flattening> X("flattening", "Call graph flattening");
++FunctionPass *llvm::createFlatteningPass(unsigned pointerSize) { return new Flattening(pointerSize); }
++FunctionPass *llvm::createFlatteningPass(unsigned pointerSize, bool flag, ObfuscationOptions *Options) {
++  return new Flattening(pointerSize, flag, Options);
++}
+diff --git "a/llvm/lib/Transforms/Obfuscation/IndirectBranch.cpp" "b/llvm/lib/Transforms/Obfuscation/IndirectBranch.cpp"
+new file mode 100644
+index 0000000..ddba0e1
+--- /dev/null
++++ "b/llvm/lib/Transforms/Obfuscation/IndirectBranch.cpp"
+@@ -0,0 +1,175 @@
++#include "llvm/IR/Constants.h"
++#include "llvm/IR/IRBuilder.h"
++#include "llvm/Support/raw_ostream.h"
++#include "llvm/Transforms/Obfuscation/IndirectBranch.h"
++#include "llvm/Transforms/Obfuscation/ObfuscationOptions.h"
++#include "llvm/Transforms/Obfuscation/Utils.h"
++#include "llvm/CryptoUtils.h"
++#include "llvm/Transforms/Utils/BasicBlockUtils.h"
++#include "llvm/Transforms/Utils/ModuleUtils.h"
++
++#include <random>
++
++#define DEBUG_TYPE "indbr"
++
++using namespace llvm;
++namespace {
++struct IndirectBranch : public FunctionPass {
++  unsigned pointerSize;
++  static char ID;
++  bool flag;
++  
++  ObfuscationOptions *Options;
++  std::map<BasicBlock *, unsigned> BBNumbering;
++  std::vector<BasicBlock *> BBTargets;        //all conditional branch targets
++  CryptoUtils RandomEngine;
++  IndirectBranch(unsigned pointerSize) : FunctionPass(ID) {
++    this->pointerSize = pointerSize;
++    this->flag = false;
++    this->Options = nullptr;
++  }
++
++  IndirectBranch(unsigned pointerSize, bool flag, ObfuscationOptions *Options) : FunctionPass(ID) {
++    this->pointerSize = pointerSize;
++    this->flag = flag;
++    this->Options = Options;
++  }
++
++  StringRef getPassName() const override { return {"IndirectBranch"}; }
++
++  void NumberBasicBlock(Function &F) {
++    for (auto &BB : F) {
++      if (auto *BI = dyn_cast<BranchInst>(BB.getTerminator())) {
++        if (BI->isConditional()) {
++          unsigned N = BI->getNumSuccessors();
++          for (unsigned I = 0; I < N; I++) {
++            BasicBlock *Succ = BI->getSuccessor(I);
++            if (BBNumbering.count(Succ) == 0) {
++              BBTargets.push_back(Succ);
++              BBNumbering[Succ] = 0;
++            }
++          }
++        }
++      }
++    }
++
++    long seed = RandomEngine.get_uint32_t();
++    std::default_random_engine e(seed);
++    std::shuffle(BBTargets.begin(), BBTargets.end(), e);
++
++    unsigned N = 0;
++    for (auto BB:BBTargets) {
++      BBNumbering[BB] = N++;
++    }
++  }
++
++  GlobalVariable *getIndirectTargets(Function &F, ConstantInt *EncKey) {
++    std::string GVName(F.getName().str() + "_IndirectBrTargets");
++    GlobalVariable *GV = F.getParent()->getNamedGlobal(GVName);
++    if (GV)
++      return GV;
++
++    // encrypt branch targets
++    std::vector<Constant *> Elements;
++    for (const auto BB:BBTargets) {
++      Constant *CE = ConstantExpr::getBitCast(BlockAddress::get(BB), PointerType::getUnqual(F.getContext()));
++      CE = ConstantExpr::getGetElementPtr(Type::getInt8Ty(F.getContext()), CE, EncKey);
++      Elements.push_back(CE);
++    }
++
++    ArrayType *ATy =
++        ArrayType::get(PointerType::getUnqual(F.getContext()), Elements.size());
++    Constant *CA = ConstantArray::get(ATy, ArrayRef<Constant *>(Elements));
++    GV = new GlobalVariable(*F.getParent(), ATy, false, GlobalValue::LinkageTypes::PrivateLinkage,
++                                               CA, GVName);
++    appendToCompilerUsed(*F.getParent(), {GV});
++    return GV;
++  }
++
++
++  bool runOnFunction(Function &Fn) override {
++    if (!toObfuscate(flag, &Fn, "indbr")) {
++      return false;
++    }
++
++    if (Options && Options->skipFunction(Fn.getName())) {
++      return false;
++    }
++
++    if (Fn.empty() || Fn.hasLinkOnceLinkage() || Fn.getSection() == ".text.startup") {
++      return false;
++    }
++
++    LLVMContext &Ctx = Fn.getContext();
++
++    // Init member fields
++    BBNumbering.clear();
++    BBTargets.clear();
++
++    // llvm cannot split critical edge from IndirectBrInst
++    SplitAllCriticalEdges(Fn, CriticalEdgeSplittingOptions(nullptr, nullptr));
++    NumberBasicBlock(Fn);
++
++    if (BBNumbering.empty()) {
++      return false;
++    }
++
++    uint64_t V = RandomEngine.get_uint64_t();
++    IntegerType* intType = Type::getInt32Ty(Ctx);
++    if (pointerSize == 8) {
++      intType = Type::getInt64Ty(Ctx);
++    }
++    ConstantInt *EncKey = ConstantInt::get(intType, V, false);
++    ConstantInt *EncKey1 = ConstantInt::get(intType, -V, false);
++
++    Value *MySecret = ConstantInt::get(intType, 0, true);
++
++    ConstantInt *Zero = ConstantInt::get(intType, 0);
++    GlobalVariable *DestBBs = getIndirectTargets(Fn, EncKey1);
++
++    for (auto &BB : Fn) {
++      auto *BI = dyn_cast<BranchInst>(BB.getTerminator());
++      if (BI && BI->isConditional()) {
++        IRBuilder<> IRB(BI);
++
++        Value *Cond = BI->getCondition();
++        Value *Idx;
++        Value *TIdx, *FIdx;
++
++        TIdx = ConstantInt::get(intType, BBNumbering[BI->getSuccessor(0)]);
++        FIdx = ConstantInt::get(intType, BBNumbering[BI->getSuccessor(1)]);
++        Idx = IRB.CreateSelect(Cond, TIdx, FIdx);
++
++        Value *GEP = IRB.CreateGEP(
++          DestBBs->getValueType(), DestBBs,
++            {Zero, Idx});
++        Value *EncDestAddr = IRB.CreateLoad(
++            GEP->getType(),
++            GEP,
++            "EncDestAddr");
++        // -EncKey = X - FuncSecret
++        Value *DecKey = IRB.CreateAdd(EncKey, MySecret);
++        Value *DestAddr = IRB.CreateGEP(
++          Type::getInt8Ty(Ctx),
++            EncDestAddr, DecKey);
++
++        IndirectBrInst *IBI = IndirectBrInst::Create(DestAddr, 2);
++        IBI->addDestination(BI->getSuccessor(0));
++        IBI->addDestination(BI->getSuccessor(1));
++        ReplaceInstWithInst(BI, IBI);
++      }
++    }
++
++    return true;
++  }
++
++};
++} // namespace llvm
++
++char IndirectBranch::ID = 0;
++FunctionPass *llvm::createIndirectBranchPass(unsigned pointerSize) { return new IndirectBranch(pointerSize); }
++FunctionPass *llvm::createIndirectBranchPass(unsigned pointerSize, bool flag,
++                                             ObfuscationOptions *Options) {
++  return new IndirectBranch(pointerSize, flag, Options);
++}
++INITIALIZE_PASS(IndirectBranch, "indbr", "Enable IR Indirect Branch Obfuscation", false, false)
+diff --git "a/llvm/lib/Transforms/Obfuscation/IndirectCall.cpp" "b/llvm/lib/Transforms/Obfuscation/IndirectCall.cpp"
+new file mode 100644
+index 0000000..4e11df0
+--- /dev/null
++++ "b/llvm/lib/Transforms/Obfuscation/IndirectCall.cpp"
+@@ -0,0 +1,179 @@
++#include "llvm/IR/Constants.h"
++#include "llvm/IR/IRBuilder.h"
++#include "llvm/Transforms/Obfuscation/IndirectCall.h"
++#include "llvm/Transforms/Obfuscation/ObfuscationOptions.h"
++#include "llvm/Transforms/Obfuscation/Utils.h"
++#include "llvm/CryptoUtils.h"
++#include "llvm/Transforms/Utils/BasicBlockUtils.h"
++#include "llvm/Transforms/Utils/ModuleUtils.h"
++
++#include <random>
++
++#define DEBUG_TYPE "icall"
++
++using namespace llvm;
++namespace {
++struct IndirectCall : public FunctionPass {
++  static char ID;
++  bool flag;
++  unsigned pointerSize;
++  
++  ObfuscationOptions *Options;
++  std::map<Function *, unsigned> CalleeNumbering;
++  std::vector<CallInst *> CallSites;
++  std::vector<Function *> Callees;
++  CryptoUtils RandomEngine;
++  IndirectCall(unsigned pointerSize) : FunctionPass(ID) {
++    this->pointerSize = pointerSize;
++    this->flag = false;
++    this->Options = nullptr;
++  }
++
++  IndirectCall(unsigned pointerSize, bool flag, ObfuscationOptions *Options) : FunctionPass(ID) {
++    this->pointerSize = pointerSize;
++    this->flag = flag;
++    this->Options = Options;
++  }
++
++  StringRef getPassName() const override { return {"IndirectCall"}; }
++
++  void NumberCallees(Function &F) {
++    for (auto &BB:F) {
++      for (auto &I:BB) {
++        if (dyn_cast<CallInst>(&I)) {
++          CallBase *CB = dyn_cast<CallBase>(&I);
++          Function *Callee = CB->getCalledFunction();
++          if (Callee == nullptr) {
++            continue;
++          }
++          if (Callee->isIntrinsic()) {
++            continue;
++          }
++          CallSites.push_back((CallInst *) &I);
++          if (CalleeNumbering.count(Callee) == 0) {
++            CalleeNumbering[Callee] = Callees.size();
++            Callees.push_back(Callee);
++          }
++        }
++      }
++    }
++  }
++
++  GlobalVariable *getIndirectCallees(Function &F, ConstantInt *EncKey) {
++    std::string GVName(F.getName().str() + "_IndirectCallees");
++    GlobalVariable *GV = F.getParent()->getNamedGlobal(GVName);
++    if (GV)
++      return GV;
++
++    // callee's address
++    std::vector<Constant *> Elements;
++    for (auto Callee:Callees) {
++      Constant *CE = ConstantExpr::getBitCast(
++          Callee, PointerType::getUnqual(F.getContext()));
++      CE = ConstantExpr::getGetElementPtr(Type::getInt8Ty(F.getContext()), CE, EncKey);
++      Elements.push_back(CE);
++    }
++
++    ArrayType *ATy =
++        ArrayType::get(PointerType::getUnqual(F.getContext()), Elements.size());
++    Constant *CA = ConstantArray::get(ATy, ArrayRef<Constant *>(Elements));
++    GV = new GlobalVariable(*F.getParent(), ATy, false, GlobalValue::LinkageTypes::PrivateLinkage,
++                                               CA, GVName);
++    appendToCompilerUsed(*F.getParent(), {GV});
++    return GV;
++  }
++
++
++  bool runOnFunction(Function &Fn) override {
++    if (!toObfuscate(flag, &Fn, "icall")) {
++      return false;
++    }
++
++    if (Options && Options->skipFunction(Fn.getName())) {
++      return false;
++    }
++
++    LLVMContext &Ctx = Fn.getContext();
++
++    CalleeNumbering.clear();
++    Callees.clear();
++    CallSites.clear();
++
++    NumberCallees(Fn);
++
++    if (Callees.empty()) {
++      return false;
++    }
++
++    uint64_t V = RandomEngine.get_uint64_t();
++    IntegerType *intType = Type::getInt32Ty(Ctx);
++    if (pointerSize == 8) {
++      intType = Type::getInt64Ty(Ctx);
++    }
++    ConstantInt *EncKey = ConstantInt::get(intType, V, false);
++    ConstantInt *EncKey1 = ConstantInt::get(intType, -V, false);
++
++    Value *MySecret = ConstantInt::get(intType, 0, true);
++
++    ConstantInt *Zero = ConstantInt::get(intType, 0);
++    GlobalVariable *Targets = getIndirectCallees(Fn, EncKey1);
++
++    for (auto CI : CallSites) {
++      SmallVector<Value *, 8> Args;
++      SmallVector<AttributeSet, 8> ArgAttrVec;
++
++      CallBase *CB = CI;
++
++      Function *Callee = CB->getCalledFunction();
++      FunctionType *FTy = CB->getFunctionType();
++      IRBuilder<> IRB(CB);
++
++      Args.clear();
++      ArgAttrVec.clear();
++
++      Value *Idx = ConstantInt::get(intType, CalleeNumbering[CB->getCalledFunction()]);
++      Value *GEP = IRB.CreateGEP(
++          Targets->getValueType(), Targets,
++          {Zero, Idx});
++      LoadInst *EncDestAddr = IRB.CreateLoad(
++          GEP->getType(), GEP,
++          CI->getName());
++
++      const AttributeList &CallPAL = CB->getAttributes();
++      auto I = CB->arg_begin();
++      unsigned i = 0;
++
++      for (unsigned e = FTy->getNumParams(); i != e; ++I, ++i) {
++        Args.push_back(*I);
++        AttributeSet Attrs = CallPAL.getParamAttrs(i);
++        ArgAttrVec.push_back(Attrs);
++      }
++
++      for (auto E = CB->arg_end(); I != E; ++I, ++i) {
++        Args.push_back(*I);
++        ArgAttrVec.push_back(CallPAL.getParamAttrs(i));
++      }
++
++      Value *Secret = IRB.CreateAdd(EncKey, MySecret);
++      Value *DestAddr = IRB.CreateGEP(Type::getInt8Ty(Ctx),
++          EncDestAddr, Secret);
++
++      Value *FnPtr = IRB.CreateBitCast(DestAddr, FTy->getPointerTo());
++      FnPtr->setName("Call_" + Callee->getName());
++      CB->setCalledOperand(FnPtr);
++    }
++
++    return true;
++  }
++
++};
++} // namespace llvm
++
++char IndirectCall::ID = 0;
++FunctionPass *llvm::createIndirectCallPass(unsigned pointerSize) { return new IndirectCall(pointerSize); }
++FunctionPass *llvm::createIndirectCallPass(unsigned pointerSize, bool flag,
++                                             ObfuscationOptions *Options) {
++  return new IndirectCall(pointerSize, flag, Options);
++}
++
++INITIALIZE_PASS(IndirectCall, "icall", "Enable IR Indirect Call Obfuscation", false, false)
+diff --git "a/llvm/lib/Transforms/Obfuscation/IndirectGlobalVariable.cpp" "b/llvm/lib/Transforms/Obfuscation/IndirectGlobalVariable.cpp"
+new file mode 100644
+index 0000000..329380a
+--- /dev/null
++++ "b/llvm/lib/Transforms/Obfuscation/IndirectGlobalVariable.cpp"
+@@ -0,0 +1,192 @@
++#include "llvm/IR/Constants.h"
++#include "llvm/IR/InstIterator.h"
++#include "llvm/IR/IRBuilder.h"
++#include "llvm/Transforms/Obfuscation/IndirectGlobalVariable.h"
++#include "llvm/Transforms/Obfuscation/ObfuscationOptions.h"
++#include "llvm/Transforms/Obfuscation/Utils.h"
++#include "llvm/CryptoUtils.h"
++#include "llvm/Transforms/Utils/ModuleUtils.h"
++
++#define DEBUG_TYPE "indgv"
++
++using namespace llvm;
++namespace {
++struct IndirectGlobalVariable : public FunctionPass {
++  unsigned pointerSize;
++  static char ID;
++  bool flag;
++  
++  ObfuscationOptions *Options;
++  std::map<GlobalVariable *, unsigned> GVNumbering;
++  std::vector<GlobalVariable *> GlobalVariables;
++  CryptoUtils RandomEngine;
++  IndirectGlobalVariable(unsigned pointerSize) : FunctionPass(ID) {
++    this->pointerSize = pointerSize;
++    this->flag = false;
++    this->Options = nullptr;
++  }
++
++  IndirectGlobalVariable(unsigned pointerSize, bool flag, ObfuscationOptions *Options) : FunctionPass(ID) {
++    this->pointerSize = pointerSize;
++    this->flag = flag;
++    this->Options = Options;
++  }
++
++  StringRef getPassName() const override { return {"IndirectGlobalVariable"}; }
++
++  void NumberGlobalVariable(Function &F) {
++    for (inst_iterator I = inst_begin(F), E = inst_end(F); I != E; ++I) {
++      for (User::op_iterator op = (*I).op_begin(); op != (*I).op_end(); ++op) {
++        Value *val = *op;
++        if (GlobalVariable *GV = dyn_cast<GlobalVariable>(val)) {
++          if (!GV->isThreadLocal() && GVNumbering.count(GV) == 0 &&
++              !GV->isDLLImportDependent()) {
++            GVNumbering[GV] = GlobalVariables.size();
++            GlobalVariables.push_back((GlobalVariable *) val);
++          }
++        }
++      }
++    }
++  }
++
++  GlobalVariable *getIndirectGlobalVariables(Function &F, ConstantInt *EncKey) {
++    std::string GVName(F.getName().str() + "_IndirectGVars");
++    GlobalVariable *GV = F.getParent()->getNamedGlobal(GVName);
++    if (GV)
++      return GV;
++
++    std::vector<Constant *> Elements;
++    for (auto GVar:GlobalVariables) {
++      Constant *CE = ConstantExpr::getBitCast(
++          GVar, PointerType::getUnqual(F.getContext()));
++      CE = ConstantExpr::getGetElementPtr(Type::getInt8Ty(F.getContext()), CE, EncKey);
++      Elements.push_back(CE);
++    }
++
++    ArrayType *ATy =
++        ArrayType::get(PointerType::getUnqual(F.getContext()), Elements.size());
++    Constant *CA = ConstantArray::get(ATy, ArrayRef<Constant *>(Elements));
++    GV = new GlobalVariable(*F.getParent(), ATy, false, GlobalValue::LinkageTypes::PrivateLinkage,
++                            CA, GVName);
++    appendToCompilerUsed(*F.getParent(), {GV});
++    return GV;
++  }
++
++  bool runOnFunction(Function &Fn) override {
++    if (!toObfuscate(flag, &Fn, "indgv")) {
++      return false;
++    }
++
++    if (Options && Options->skipFunction(Fn.getName())) {
++      return false;
++    }
++
++    LLVMContext &Ctx = Fn.getContext();
++
++    GVNumbering.clear();
++    GlobalVariables.clear();
++
++    LowerConstantExpr(Fn);
++    NumberGlobalVariable(Fn);
++
++    if (GlobalVariables.empty()) {
++      return false;
++    }
++
++    uint64_t V = RandomEngine.get_uint64_t();
++    IntegerType* intType = Type::getInt32Ty(Ctx);
++    if (pointerSize == 8) {
++      intType = Type::getInt64Ty(Ctx);
++    }
++
++    ConstantInt *EncKey = ConstantInt::get(intType, V, false);
++    ConstantInt *EncKey1 = ConstantInt::get(intType, -V, false);
++
++    Value *MySecret = ConstantInt::get(intType, 0, true);
++
++    ConstantInt *Zero = ConstantInt::get(intType, 0);
++    GlobalVariable *GVars = getIndirectGlobalVariables(Fn, EncKey1);
++
++    for (inst_iterator I = inst_begin(Fn), E = inst_end(Fn); I != E; ++I) {
++      Instruction *Inst = &*I;
++      if (isa<LandingPadInst>(Inst) || isa<CleanupPadInst>(Inst) ||
++          isa<CatchPadInst>(Inst) || isa<CatchReturnInst>(Inst) ||
++          isa<CatchSwitchInst>(Inst) || isa<ResumeInst>(Inst) || 
++          isa<CallInst>(Inst)) {
++        continue;
++      }
++      if (PHINode *PHI = dyn_cast<PHINode>(Inst)) {
++        for (unsigned int i = 0; i < PHI->getNumIncomingValues(); ++i) {
++          Value *val = PHI->getIncomingValue(i);
++          if (GlobalVariable *GV = dyn_cast<GlobalVariable>(val)) {
++            if (GVNumbering.count(GV) == 0) {
++              continue;
++            }
++
++            Instruction *IP = PHI->getIncomingBlock(i)->getTerminator();
++            IRBuilder<> IRB(IP);
++
++            Value *Idx = ConstantInt::get(intType, GVNumbering[GV]);
++            Value *GEP = IRB.CreateGEP(
++                GVars->getValueType(),
++                GVars,
++                {Zero, Idx});
++            LoadInst *EncGVAddr = IRB.CreateLoad(
++                GEP->getType(), GEP,
++                GV->getName());
++
++            Value *Secret = IRB.CreateAdd(EncKey, MySecret);
++            Value *GVAddr = IRB.CreateGEP(
++              Type::getInt8Ty(Ctx),
++                EncGVAddr,
++                Secret);
++            GVAddr = IRB.CreateBitCast(GVAddr, GV->getType());
++            GVAddr->setName("IndGV0_");
++            PHI->setIncomingValue(i, GVAddr);
++          }
++        }
++      } else {
++        for (User::op_iterator op = Inst->op_begin(); op != Inst->op_end(); ++op) {
++          if (GlobalVariable *GV = dyn_cast<GlobalVariable>(*op)) {
++            if (GVNumbering.count(GV) == 0) {
++              continue;
++            }
++
++            IRBuilder<> IRB(Inst);
++            Value *Idx = ConstantInt::get(intType, GVNumbering[GV]);
++            Value *GEP = IRB.CreateGEP(
++                GVars->getValueType(),
++                GVars,
++                {Zero, Idx});
++            LoadInst *EncGVAddr = IRB.CreateLoad(
++                GEP->getType(),
++                GEP,
++                GV->getName());
++
++            Value *Secret = IRB.CreateAdd(EncKey, MySecret);
++            Value *GVAddr = IRB.CreateGEP(
++              Type::getInt8Ty(Ctx),
++                EncGVAddr,
++                Secret);
++            GVAddr = IRB.CreateBitCast(GVAddr, GV->getType());
++            GVAddr->setName("IndGV1_");
++            Inst->replaceUsesOfWith(GV, GVAddr);
++          }
++        }
++      }
++    }
++
++      return true;
++    }
++
++  };
++} // namespace llvm
++
++char IndirectGlobalVariable::ID = 0;
++FunctionPass *llvm::createIndirectGlobalVariablePass(unsigned pointerSize) { return new IndirectGlobalVariable(pointerSize); }
++FunctionPass *llvm::createIndirectGlobalVariablePass(unsigned pointerSize, bool flag,
++                                                     ObfuscationOptions *Options) {
++  return new IndirectGlobalVariable(pointerSize, flag, Options);
++}
++
++INITIALIZE_PASS(IndirectGlobalVariable, "indgv", "Enable IR Indirect Global Variable Obfuscation", false, false)
+diff --git "a/llvm/lib/Transforms/Obfuscation/LegacyLowerSwitch.cpp" "b/llvm/lib/Transforms/Obfuscation/LegacyLowerSwitch.cpp"
+new file mode 100644
+index 0000000..863a183
+--- /dev/null
++++ "b/llvm/lib/Transforms/Obfuscation/LegacyLowerSwitch.cpp"
+@@ -0,0 +1,551 @@
++//===- LowerSwitch.cpp - Eliminate Switch instructions --------------------===//
++//
++//                     The LLVM Compiler Infrastructure
++//
++// This file is distributed under the University of Illinois Open Source
++// License. See LICENSE.TXT for details.
++//
++//===----------------------------------------------------------------------===//
++//
++// The LowerSwitch transformation rewrites switch instructions with a sequence
++// of branches, which allows targets to get away with not implementing the
++// switch instruction until it is convenient.
++//
++//===----------------------------------------------------------------------===//
++#include "llvm/Transforms/Obfuscation/LegacyLowerSwitch.h"
++#include "llvm/ADT/DenseMap.h"
++#include "llvm/ADT/STLExtras.h"
++#include "llvm/ADT/SmallPtrSet.h"
++#include "llvm/ADT/SmallVector.h"
++#include "llvm/IR/BasicBlock.h"
++#include "llvm/IR/CFG.h"
++#include "llvm/IR/Constants.h"
++#include "llvm/IR/Function.h"
++#include "llvm/IR/InstrTypes.h"
++#include "llvm/IR/Instructions.h"
++#include "llvm/IR/Value.h"
++#include "llvm/Pass.h"
++#include "llvm/Support/Casting.h"
++#include "llvm/Support/Compiler.h"
++#include "llvm/Support/Debug.h"
++#include "llvm/Support/raw_ostream.h"
++#include "llvm/Transforms/Utils/BasicBlockUtils.h"
++#include <algorithm>
++#include <cassert>
++#include <cstdint>
++#include <iterator>
++#include <limits>
++#include <vector>
++
++using namespace llvm;
++
++#define DEBUG_TYPE "lower-switch"
++
++namespace {
++
++  struct IntRange {
++    int64_t Low, High;
++  };
++
++} // end anonymous namespace
++
++// Return true iff R is covered by Ranges.
++static bool IsInRanges(const IntRange &R,
++                       const std::vector<IntRange> &Ranges) {
++  // Note: Ranges must be sorted, non-overlapping and non-adjacent.
++
++  // Find the first range whose High field is >= R.High,
++  // then check if the Low field is <= R.Low. If so, we
++  // have a Range that covers R.
++  auto I = std::lower_bound(
++      Ranges.begin(), Ranges.end(), R,
++      [](const IntRange &A, const IntRange &B) { return A.High < B.High; });
++  return I != Ranges.end() && I->Low <= R.Low;
++}
++
++namespace {
++
++  /// Replace all SwitchInst instructions with chained branch instructions.
++  class LowerSwitch : public FunctionPass {
++  public:
++    // Pass identification, replacement for typeid
++    static char ID;
++
++    LowerSwitch() : FunctionPass(ID) {
++      //initializeLowerSwitchPass(*PassRegistry::getPassRegistry());
++    }
++
++    bool runOnFunction(Function &F) override;
++
++    struct CaseRange {
++      ConstantInt* Low;
++      ConstantInt* High;
++      BasicBlock* BB;
++
++      CaseRange(ConstantInt *low, ConstantInt *high, BasicBlock *bb)
++          : Low(low), High(high), BB(bb) {}
++    };
++
++    using CaseVector = std::vector<CaseRange>;
++    using CaseItr = std::vector<CaseRange>::iterator;
++
++  private:
++    void processSwitchInst(SwitchInst *SI, SmallPtrSetImpl<BasicBlock*> &DeleteList);
++
++    BasicBlock *switchConvert(CaseItr Begin, CaseItr End,
++                              ConstantInt *LowerBound, ConstantInt *UpperBound,
++                              Value *Val, BasicBlock *Predecessor,
++                              BasicBlock *OrigBlock, BasicBlock *Default,
++                              const std::vector<IntRange> &UnreachableRanges);
++    BasicBlock *newLeafBlock(CaseRange &Leaf, Value *Val, BasicBlock *OrigBlock,
++                             BasicBlock *Default);
++    unsigned Clusterify(CaseVector &Cases, SwitchInst *SI);
++  };
++
++  /// The comparison function for sorting the switch case values in the vector.
++  /// WARNING: Case ranges should be disjoint!
++  struct CaseCmp {
++    bool operator()(const LowerSwitch::CaseRange& C1,
++                    const LowerSwitch::CaseRange& C2) {
++      const ConstantInt* CI1 = cast<const ConstantInt>(C1.Low);
++      const ConstantInt* CI2 = cast<const ConstantInt>(C2.High);
++      return CI1->getValue().slt(CI2->getValue());
++    }
++  };
++
++} // end anonymous namespace
++
++char LowerSwitch::ID = 0;
++
++// Publicly exposed interface to pass...
++//char &llvm::LowerSwitchID = LowerSwitch::ID;
++
++//INITIALIZE_PASS(LowerSwitch, "lowerswitch",
++//                "Lower SwitchInst's to branches", false, false)
++
++// createLowerSwitchPass - Interface to this file...
++FunctionPass *llvm::createLegacyLowerSwitchPass() {
++  return new LowerSwitch();
++}
++
++bool LowerSwitch::runOnFunction(Function &F) {
++  bool Changed = false;
++  SmallPtrSet<BasicBlock*, 8> DeleteList;
++
++  for (Function::iterator I = F.begin(), E = F.end(); I != E; ) {
++    BasicBlock *Cur = &*I++; // Advance over block so we don't traverse new blocks
++
++    // If the block is a dead Default block that will be deleted later, don't
++    // waste time processing it.
++    if (DeleteList.count(Cur))
++      continue;
++
++    if (SwitchInst *SI = dyn_cast<SwitchInst>(Cur->getTerminator())) {
++      Changed = true;
++      processSwitchInst(SI, DeleteList);
++    }
++  }
++
++  for (BasicBlock* BB: DeleteList) {
++    DeleteDeadBlock(BB);
++  }
++
++  return Changed;
++}
++
++/// Used for debugging purposes.
++LLVM_ATTRIBUTE_USED
++static raw_ostream &operator<<(raw_ostream &O,
++                               const LowerSwitch::CaseVector &C) {
++  O << "[";
++
++  for (LowerSwitch::CaseVector::const_iterator B = C.begin(),
++         E = C.end(); B != E; ) {
++    O << *B->Low << " -" << *B->High;
++    if (++B != E) O << ", ";
++  }
++
++  return O << "]";
++}
++
++/// Update the first occurrence of the "switch statement" BB in the PHI
++/// node with the "new" BB. The other occurrences will:
++///
++/// 1) Be updated by subsequent calls to this function.  Switch statements may
++/// have more than one outcoming edge into the same BB if they all have the same
++/// value. When the switch statement is converted these incoming edges are now
++/// coming from multiple BBs.
++/// 2) Removed if subsequent incoming values now share the same case, i.e.,
++/// multiple outcome edges are condensed into one. This is necessary to keep the
++/// number of phi values equal to the number of branches to SuccBB.
++static void fixPhis(BasicBlock *SuccBB, BasicBlock *OrigBB, BasicBlock *NewBB,
++                    unsigned NumMergedCases) {
++  for (BasicBlock::iterator I = SuccBB->begin(),
++                            IE = SuccBB->getFirstNonPHI()->getIterator();
++       I != IE; ++I) {
++    PHINode *PN = cast<PHINode>(I);
++
++    // Only update the first occurrence.
++    unsigned Idx = 0, E = PN->getNumIncomingValues();
++    unsigned LocalNumMergedCases = NumMergedCases;
++    for (; Idx != E; ++Idx) {
++      if (PN->getIncomingBlock(Idx) == OrigBB) {
++        PN->setIncomingBlock(Idx, NewBB);
++        break;
++      }
++    }
++
++    // Remove additional occurrences coming from condensed cases and keep the
++    // number of incoming values equal to the number of branches to SuccBB.
++    SmallVector<unsigned, 8> Indices;
++    for (++Idx; LocalNumMergedCases > 0 && Idx < E; ++Idx)
++      if (PN->getIncomingBlock(Idx) == OrigBB) {
++        Indices.push_back(Idx);
++        LocalNumMergedCases--;
++      }
++    // Remove incoming values in the reverse order to prevent invalidating
++    // *successive* index.
++    for (unsigned III : llvm::reverse(Indices))
++      PN->removeIncomingValue(III);
++  }
++}
++
++/// Convert the switch statement into a binary lookup of the case values.
++/// The function recursively builds this tree. LowerBound and UpperBound are
++/// used to keep track of the bounds for Val that have already been checked by
++/// a block emitted by one of the previous calls to switchConvert in the call
++/// stack.
++BasicBlock *
++LowerSwitch::switchConvert(CaseItr Begin, CaseItr End, ConstantInt *LowerBound,
++                           ConstantInt *UpperBound, Value *Val,
++                           BasicBlock *Predecessor, BasicBlock *OrigBlock,
++                           BasicBlock *Default,
++                           const std::vector<IntRange> &UnreachableRanges) {
++  unsigned Size = End - Begin;
++
++  if (Size == 1) {
++    // Check if the Case Range is perfectly squeezed in between
++    // already checked Upper and Lower bounds. If it is then we can avoid
++    // emitting the code that checks if the value actually falls in the range
++    // because the bounds already tell us so.
++    if (Begin->Low == LowerBound && Begin->High == UpperBound) {
++      unsigned NumMergedCases = 0;
++      if (LowerBound && UpperBound)
++        NumMergedCases =
++            UpperBound->getSExtValue() - LowerBound->getSExtValue();
++      fixPhis(Begin->BB, OrigBlock, Predecessor, NumMergedCases);
++      return Begin->BB;
++    }
++    return newLeafBlock(*Begin, Val, OrigBlock, Default);
++  }
++
++  unsigned Mid = Size / 2;
++  std::vector<CaseRange> LHS(Begin, Begin + Mid);
++  LLVM_DEBUG(dbgs() << "LHS: " << LHS << "\n");
++  std::vector<CaseRange> RHS(Begin + Mid, End);
++  LLVM_DEBUG(dbgs() << "RHS: " << RHS << "\n");
++
++  CaseRange &Pivot = *(Begin + Mid);
++  LLVM_DEBUG(dbgs() << "Pivot ==> " << Pivot.Low->getValue() << " -"
++                    << Pivot.High->getValue() << "\n");
++
++  // NewLowerBound here should never be the integer minimal value.
++  // This is because it is computed from a case range that is never
++  // the smallest, so there is always a case range that has at least
++  // a smaller value.
++  ConstantInt *NewLowerBound = Pivot.Low;
++
++  // Because NewLowerBound is never the smallest representable integer
++  // it is safe here to subtract one.
++  ConstantInt *NewUpperBound = ConstantInt::get(NewLowerBound->getContext(),
++                                                NewLowerBound->getValue() - 1);
++
++  if (!UnreachableRanges.empty()) {
++    // Check if the gap between LHS's highest and NewLowerBound is unreachable.
++    int64_t GapLow = LHS.back().High->getSExtValue() + 1;
++    int64_t GapHigh = NewLowerBound->getSExtValue() - 1;
++    IntRange Gap = { GapLow, GapHigh };
++    if (GapHigh >= GapLow && IsInRanges(Gap, UnreachableRanges))
++      NewUpperBound = LHS.back().High;
++  }
++
++  LLVM_DEBUG(dbgs() << "LHS Bounds ==> "; if (LowerBound) {
++    dbgs() << LowerBound->getSExtValue();
++  } else { dbgs() << "NONE"; } dbgs() << " - "
++                                      << NewUpperBound->getSExtValue() << "\n";
++             dbgs() << "RHS Bounds ==> ";
++             dbgs() << NewLowerBound->getSExtValue() << " - "; if (UpperBound) {
++               dbgs() << UpperBound->getSExtValue() << "\n";
++             } else { dbgs() << "NONE\n"; });
++
++  // Create a new node that checks if the value is < pivot. Go to the
++  // left branch if it is and right branch if not.
++  Function* F = OrigBlock->getParent();
++  BasicBlock* NewNode = BasicBlock::Create(Val->getContext(), "NodeBlock");
++
++  ICmpInst* Comp = new ICmpInst(ICmpInst::ICMP_SLT,
++                                Val, Pivot.Low, "Pivot");
++
++  BasicBlock *LBranch = switchConvert(LHS.begin(), LHS.end(), LowerBound,
++                                      NewUpperBound, Val, NewNode, OrigBlock,
++                                      Default, UnreachableRanges);
++  BasicBlock *RBranch = switchConvert(RHS.begin(), RHS.end(), NewLowerBound,
++                                      UpperBound, Val, NewNode, OrigBlock,
++                                      Default, UnreachableRanges);
++
++  F->insert(++OrigBlock->getIterator(), NewNode);
++  Comp->insertInto(NewNode, NewNode->end());
++
++  BranchInst::Create(LBranch, RBranch, Comp, NewNode);
++  return NewNode;
++}
++
++/// Create a new leaf block for the binary lookup tree. It checks if the
++/// switch's value == the case's value. If not, then it jumps to the default
++/// branch. At this point in the tree, the value can't be another valid case
++/// value, so the jump to the "default" branch is warranted.
++BasicBlock* LowerSwitch::newLeafBlock(CaseRange& Leaf, Value* Val,
++                                      BasicBlock* OrigBlock,
++                                      BasicBlock* Default) {
++  Function* F = OrigBlock->getParent();
++  BasicBlock* NewLeaf = BasicBlock::Create(Val->getContext(), "LeafBlock");
++  F->insert(++OrigBlock->getIterator(), NewLeaf);
++
++  // Emit comparison
++  ICmpInst* Comp;
++  if (Leaf.Low == Leaf.High) {
++    // Make the seteq instruction...
++    Comp = new ICmpInst(*NewLeaf, ICmpInst::ICMP_EQ, Val,
++                        Leaf.Low, "SwitchLeaf");
++  } else {
++    // Make range comparison
++    if (Leaf.Low->isMinValue(true /*isSigned*/)) {
++      // Val >= Min && Val <= Hi --> Val <= Hi
++      Comp = new ICmpInst(*NewLeaf, ICmpInst::ICMP_SLE, Val, Leaf.High,
++                          "SwitchLeaf");
++    } else if (Leaf.Low->isZero()) {
++      // Val >= 0 && Val <= Hi --> Val <=u Hi
++      Comp = new ICmpInst(*NewLeaf, ICmpInst::ICMP_ULE, Val, Leaf.High,
++                          "SwitchLeaf");
++    } else {
++      // Emit V-Lo <=u Hi-Lo
++      Constant* NegLo = ConstantExpr::getNeg(Leaf.Low);
++      Instruction* Add = BinaryOperator::CreateAdd(Val, NegLo,
++                                                   Val->getName()+".off",
++                                                   NewLeaf);
++      Constant *UpperBound = ConstantExpr::getAdd(NegLo, Leaf.High);
++      Comp = new ICmpInst(*NewLeaf, ICmpInst::ICMP_ULE, Add, UpperBound,
++                          "SwitchLeaf");
++    }
++  }
++
++  // Make the conditional branch...
++  BasicBlock* Succ = Leaf.BB;
++  BranchInst::Create(Succ, Default, Comp, NewLeaf);
++
++  // If there were any PHI nodes in this successor, rewrite one entry
++  // from OrigBlock to come from NewLeaf.
++  for (BasicBlock::iterator I = Succ->begin(); isa<PHINode>(I); ++I) {
++    PHINode* PN = cast<PHINode>(I);
++    // Remove all but one incoming entries from the cluster
++    uint64_t Range = Leaf.High->getSExtValue() -
++                     Leaf.Low->getSExtValue();
++    for (uint64_t j = 0; j < Range; ++j) {
++      PN->removeIncomingValue(OrigBlock);
++    }
++
++    int BlockIdx = PN->getBasicBlockIndex(OrigBlock);
++    assert(BlockIdx != -1 && "Switch didn't go to this successor??");
++    PN->setIncomingBlock((unsigned)BlockIdx, NewLeaf);
++  }
++
++  return NewLeaf;
++}
++
++/// Transform simple list of Cases into list of CaseRange's.
++unsigned LowerSwitch::Clusterify(CaseVector& Cases, SwitchInst *SI) {
++  unsigned numCmps = 0;
++
++  // Start with "simple" cases
++  for (auto Case : SI->cases())
++    Cases.push_back(CaseRange(Case.getCaseValue(), Case.getCaseValue(),
++                              Case.getCaseSuccessor()));
++
++  llvm::sort(Cases.begin(), Cases.end(), CaseCmp());
++
++  // Merge case into clusters
++  if (Cases.size() >= 2) {
++    CaseItr I = Cases.begin();
++    for (CaseItr J = std::next(I), E = Cases.end(); J != E; ++J) {
++      int64_t nextValue = J->Low->getSExtValue();
++      int64_t currentValue = I->High->getSExtValue();
++      BasicBlock* nextBB = J->BB;
++      BasicBlock* currentBB = I->BB;
++
++      // If the two neighboring cases go to the same destination, merge them
++      // into a single case.
++      assert(nextValue > currentValue && "Cases should be strictly ascending");
++      if ((nextValue == currentValue + 1) && (currentBB == nextBB)) {
++        I->High = J->High;
++        // FIXME: Combine branch weights.
++      } else if (++I != J) {
++        *I = *J;
++      }
++    }
++    Cases.erase(std::next(I), Cases.end());
++  }
++
++  for (CaseItr I=Cases.begin(), E=Cases.end(); I!=E; ++I, ++numCmps) {
++    if (I->Low != I->High)
++      // A range counts double, since it requires two compares.
++      ++numCmps;
++  }
++
++  return numCmps;
++}
++
++/// Replace the specified switch instruction with a sequence of chained if-then
++/// insts in a balanced binary search.
++void LowerSwitch::processSwitchInst(SwitchInst *SI,
++                                    SmallPtrSetImpl<BasicBlock*> &DeleteList) {
++  BasicBlock *CurBlock = SI->getParent();
++  BasicBlock *OrigBlock = CurBlock;
++  Function *F = CurBlock->getParent();
++  Value *Val = SI->getCondition();  // The value we are switching on...
++  BasicBlock* Default = SI->getDefaultDest();
++
++  // Don't handle unreachable blocks. If there are successors with phis, this
++  // would leave them behind with missing predecessors.
++  if ((CurBlock != &F->getEntryBlock() && pred_empty(CurBlock)) ||
++      CurBlock->getSinglePredecessor() == CurBlock) {
++    DeleteList.insert(CurBlock);
++    return;
++  }
++
++  // If there is only the default destination, just branch.
++  if (!SI->getNumCases()) {
++    BranchInst::Create(Default, CurBlock);
++    SI->eraseFromParent();
++    return;
++  }
++
++  // Prepare cases vector.
++  CaseVector Cases;
++  unsigned numCmps = Clusterify(Cases, SI);
++  LLVM_DEBUG(dbgs() << "Clusterify finished. Total clusters: " << Cases.size()
++                    << ". Total compares: " << numCmps << "\n");
++  LLVM_DEBUG(dbgs() << "Cases: " << Cases << "\n");
++  (void)numCmps;
++
++  ConstantInt *LowerBound = nullptr;
++  ConstantInt *UpperBound = nullptr;
++  std::vector<IntRange> UnreachableRanges;
++
++  if (isa<UnreachableInst>(Default->getFirstNonPHIOrDbg())) {
++    // Make the bounds tightly fitted around the case value range, because we
++    // know that the value passed to the switch must be exactly one of the case
++    // values.
++    assert(!Cases.empty());
++    LowerBound = Cases.front().Low;
++    UpperBound = Cases.back().High;
++
++    DenseMap<BasicBlock *, unsigned> Popularity;
++    unsigned MaxPop = 0;
++    BasicBlock *PopSucc = nullptr;
++
++    IntRange R = {std::numeric_limits<int64_t>::min(),
++                  std::numeric_limits<int64_t>::max()};
++    UnreachableRanges.push_back(R);
++    for (const auto &I : Cases) {
++      int64_t Low = I.Low->getSExtValue();
++      int64_t High = I.High->getSExtValue();
++
++      IntRange &LastRange = UnreachableRanges.back();
++      if (LastRange.Low == Low) {
++        // There is nothing left of the previous range.
++        UnreachableRanges.pop_back();
++      } else {
++        // Terminate the previous range.
++        assert(Low > LastRange.Low);
++        LastRange.High = Low - 1;
++      }
++      if (High != std::numeric_limits<int64_t>::max()) {
++        UnreachableRanges.push_back(
++            {High + 1, std::numeric_limits<int64_t>::max()});
++      }
++
++      // Count popularity.
++      int64_t N = High - Low + 1;
++      unsigned &Pop = Popularity[I.BB];
++      if ((Pop += N) > MaxPop) {
++        MaxPop = Pop;
++        PopSucc = I.BB;
++      }
++    }
++#ifndef NDEBUG
++    /* UnreachableRanges should be sorted and the ranges non-adjacent. */
++    for (auto I = UnreachableRanges.begin(), E = UnreachableRanges.end();
++         I != E; ++I) {
++      assert(I->Low <= I->High);
++      auto Next = I + 1;
++      if (Next != E) {
++        assert(Next->Low > I->High);
++      }
++    }
++#endif
++
++    // As the default block in the switch is unreachable, update the PHI nodes
++    // (remove the entry to the default block) to reflect this.
++    Default->removePredecessor(OrigBlock);
++
++    // Use the most popular block as the new default, reducing the number of
++    // cases.
++    assert(MaxPop > 0 && PopSucc);
++    Default = PopSucc;
++    Cases.erase(
++        llvm::remove_if(
++            Cases, [PopSucc](const CaseRange &R) { return R.BB == PopSucc; }),
++        Cases.end());
++
++    // If there are no cases left, just branch.
++    if (Cases.empty()) {
++      BranchInst::Create(Default, CurBlock);
++      SI->eraseFromParent();
++      // As all the cases have been replaced with a single branch, only keep
++      // one entry in the PHI nodes.
++      for (unsigned I = 0 ; I < (MaxPop - 1) ; ++I)
++        PopSucc->removePredecessor(OrigBlock);
++      return;
++    }
++  }
++
++  unsigned NrOfDefaults = (SI->getDefaultDest() == Default) ? 1 : 0;
++  for (const auto &Case : SI->cases())
++    if (Case.getCaseSuccessor() == Default)
++      NrOfDefaults++;
++
++  // Create a new, empty default block so that the new hierarchy of
++  // if-then statements go to this and the PHI nodes are happy.
++  BasicBlock *NewDefault = BasicBlock::Create(SI->getContext(), "NewDefault");
++  F->insert(Default->getIterator(), NewDefault);
++  BranchInst::Create(Default, NewDefault);
++
++  BasicBlock *SwitchBlock =
++      switchConvert(Cases.begin(), Cases.end(), LowerBound, UpperBound, Val,
++                    OrigBlock, OrigBlock, NewDefault, UnreachableRanges);
++
++  // If there are entries in any PHI nodes for the default edge, make sure
++  // to update them as well.
++  fixPhis(Default, OrigBlock, NewDefault, NrOfDefaults);
++
++  // Branch to our shiny new if-then stuff...
++  BranchInst::Create(SwitchBlock, OrigBlock);
++
++  // We are now done with the switch instruction, delete it.
++  BasicBlock *OldDefault = SI->getDefaultDest();
++  CurBlock->erase(SI->getIterator(), ++SI->getIterator());
++
++  // If the Default block has no more predecessors just add it to DeleteList.
++  if (pred_begin(OldDefault) == pred_end(OldDefault))
++    DeleteList.insert(OldDefault);
++}
+diff --git "a/llvm/lib/Transforms/Obfuscation/ObfuscationOptions.cpp" "b/llvm/lib/Transforms/Obfuscation/ObfuscationOptions.cpp"
+new file mode 100644
+index 0000000..96e332f
+--- /dev/null
++++ "b/llvm/lib/Transforms/Obfuscation/ObfuscationOptions.cpp"
+@@ -0,0 +1,116 @@
++#include "llvm/Support/ErrorOr.h"
++#include "llvm/Support/MemoryBuffer.h"
++#include "llvm/Support/SourceMgr.h"
++#include "llvm/ADT/SmallString.h"
++#include "llvm/Transforms/Obfuscation/ObfuscationOptions.h"
++#include "llvm/Support/FileSystem.h"
++
++using namespace llvm;
++
++namespace llvm {
++
++void ObfuscationOptions::init() {
++  EnableIndirectBr = false;
++  EnableIndirectCall = false;
++  EnableIndirectGV = false;
++  EnableCFF = false;
++  EnableCSE = false;
++  hasFilter = false;
++}
++
++ObfuscationOptions::ObfuscationOptions() {
++  init();
++}
++ObfuscationOptions::ObfuscationOptions(const Twine &FileName) {
++  init();
++  if (sys::fs::exists(FileName)) {
++    parseOptions(FileName);
++  }
++}
++
++static StringRef getNodeString(yaml::Node *n) {
++  if (yaml::ScalarNode *sn = dyn_cast<yaml::ScalarNode>(n)) {
++    SmallString<32> Storage;
++    StringRef Val = sn->getValue(Storage);
++    return Val;
++  } else {
++    return "";
++  }
++}
++
++static unsigned long getIntVal(yaml::Node *n) {
++  return strtoul(getNodeString(n).str().c_str(), nullptr, 10);
++}
++
++static std::set<std::string> getStringList(yaml::Node *n) {
++  std::set<std::string> filter;
++  if (yaml::SequenceNode *sn = dyn_cast<yaml::SequenceNode>(n)) {
++    for (yaml::SequenceNode::iterator i = sn->begin(), e = sn->end();
++         i != e; ++i) {
++      filter.insert(getNodeString(i).str());
++    }
++  }
++  return filter;
++}
++
++bool ObfuscationOptions::skipFunction(const Twine &FName) {
++  if (FName.str().find("goron_") == std::string::npos) {
++    return hasFilter && FunctionFilter.count(FName.str()) == 0;
++  } else {
++    return true;
++  }
++}
++
++void ObfuscationOptions::handleRoot(yaml::Node *n) {
++  if (!n)
++    return;
++  if (yaml::MappingNode *mn = dyn_cast<yaml::MappingNode>(n)) {
++    for (yaml::MappingNode::iterator i = mn->begin(), e = mn->end();
++         i != e; ++i) {
++      StringRef K = getNodeString(i->getKey());
++      if (K == "IndirectBr") {
++        EnableIndirectBr = static_cast<bool>(getIntVal(i->getValue()));
++      } else if (K == "IndirectCall") {
++        EnableIndirectCall = static_cast<bool>(getIntVal(i->getValue()));
++      } else if (K == "IndirectGV") {
++        EnableIndirectGV = static_cast<bool>(getIntVal(i->getValue()));
++      } else if (K == "ControlFlowFlatten") {
++        EnableCFF = static_cast<bool>(getIntVal(i->getValue()));
++      } else if (K == "ConstantStringEncryption") {
++        EnableCSE = static_cast<bool>(getIntVal(i->getValue()));
++      } else if (K == "Filter") {
++        hasFilter = true;
++        FunctionFilter = getStringList(i->getValue());
++      }
++    }
++  }
++}
++
++bool ObfuscationOptions::parseOptions(const Twine &FileName) {
++  ErrorOr<std::unique_ptr<MemoryBuffer>> BufOrErr =
++      MemoryBuffer::getFileOrSTDIN(FileName);
++  MemoryBuffer &Buf = *BufOrErr.get();
++
++  llvm::SourceMgr sm;
++
++  yaml::Stream stream(Buf.getBuffer(), sm, false);
++  for (yaml::document_iterator di = stream.begin(), de = stream.end(); di != de;
++       ++di) {
++    yaml::Node *n = di->getRoot();
++    if (n)
++      handleRoot(n);
++    else
++      break;
++  }
++  return true;
++}
++
++void ObfuscationOptions::dump() {
++  dbgs() << "EnableIndirectBr: " << EnableIndirectBr << "\n"
++         << "EnableIndirectCall: " << EnableIndirectCall << "\n"
++         << "EnableIndirectGV: " << EnableIndirectGV << "\n"
++         << "EnableCFF: " << EnableCFF << "\n"
++         << "hasFilter:" << hasFilter << "\n";
++}
++
++}
+diff --git "a/llvm/lib/Transforms/Obfuscation/ObfuscationPassManager.cpp" "b/llvm/lib/Transforms/Obfuscation/ObfuscationPassManager.cpp"
+new file mode 100644
+index 0000000..48327fd
+--- /dev/null
++++ "b/llvm/lib/Transforms/Obfuscation/ObfuscationPassManager.cpp"
+@@ -0,0 +1,148 @@
++#include "llvm/Transforms/Obfuscation/ObfuscationPassManager.h"
++#include "llvm/IR/LegacyPassManager.h"
++#include "llvm/Support/CommandLine.h"
++#include "llvm/Support/FileSystem.h"
++#include "llvm/Support/Path.h"
++#include "llvm/Transforms/Obfuscation/ObfuscationOptions.h"
++
++#define DEBUG_TYPE "ir-obfuscation"
++
++using namespace llvm;
++
++static cl::opt<bool>
++    EnableIRObfusaction("irobf", cl::init(false), cl::NotHidden,
++                        cl::desc("Enable IR Code Obfuscation."),
++                        cl::ZeroOrMore);
++static cl::opt<bool>
++    EnableIndirectBr("irobf-indbr", cl::init(false), cl::NotHidden,
++                     cl::desc("Enable IR Indirect Branch Obfuscation."),
++                     cl::ZeroOrMore);
++
++static cl::opt<bool>
++    EnableIndirectCall("irobf-icall", cl::init(false), cl::NotHidden,
++                       cl::desc("Enable IR Indirect Call Obfuscation."),
++                       cl::ZeroOrMore);
++
++static cl::opt<bool> EnableIndirectGV(
++    "irobf-indgv", cl::init(false), cl::NotHidden,
++    cl::desc("Enable IR Indirect Global Variable Obfuscation."),
++    cl::ZeroOrMore);
++
++static cl::opt<bool> EnableIRFlattening(
++    "irobf-cff", cl::init(false), cl::NotHidden,
++    cl::desc("Enable IR Control Flow Flattening Obfuscation."), cl::ZeroOrMore);
++
++static cl::opt<bool>
++    EnableIRStringEncryption("irobf-cse", cl::init(false), cl::NotHidden,
++                             cl::desc("Enable IR Constant String Encryption."), cl::ZeroOrMore);
++
++static cl::opt<std::string> GoronConfigure("goron-cfg",
++                                           cl::desc("Goron configuration file"),
++                                           cl::Optional);
++
++namespace llvm {
++
++struct ObfuscationPassManager : public ModulePass {
++  static char ID; // Pass identification
++  SmallVector<Pass *, 8> Passes;
++
++  ObfuscationPassManager() : ModulePass(ID) {
++    initializeObfuscationPassManagerPass(*PassRegistry::getPassRegistry());
++  };
++
++  StringRef getPassName() const override { return "Obfuscation Pass Manager"; }
++
++  bool doFinalization(Module &M) override {
++    bool Change = false;
++    for (Pass *P : Passes) {
++      Change |= P->doFinalization(M);
++      delete (P);
++    }
++    return Change;
++  }
++
++  void add(Pass *P) { Passes.push_back(P); }
++
++  bool run(Module &M) {
++    bool Change = false;
++    for (Pass *P : Passes) {
++      switch (P->getPassKind()) {
++      case PassKind::PT_Function:
++        Change |= runFunctionPass(M, (FunctionPass *)P);
++        break;
++      case PassKind::PT_Module:
++        Change |= runModulePass(M, (ModulePass *)P);
++        break;
++      default:
++        continue;
++      }
++    }
++    return Change;
++  }
++
++  bool runFunctionPass(Module &M, FunctionPass *P) {
++    bool Changed = false;
++    for (Function &F : M) {
++      Changed |= P->runOnFunction(F);
++    }
++    return Changed;
++  }
++
++  bool runModulePass(Module &M, ModulePass *P) { return P->runOnModule(M); }
++
++  static ObfuscationOptions *getOptions() {
++    ObfuscationOptions *Options = nullptr;
++    if (sys::fs::exists(GoronConfigure.getValue())) {
++      Options = new ObfuscationOptions(GoronConfigure.getValue());
++    } else {
++      SmallString<128> ConfigurePath;
++      if (sys::path::home_directory(ConfigurePath)) {
++        sys::path::append(ConfigurePath, "goron.yaml");
++        Options = new ObfuscationOptions(ConfigurePath);
++      } else {
++        Options = new ObfuscationOptions();
++      }
++    }
++    return Options;
++  }
++
++  bool runOnModule(Module &M) override {
++    
++    if (EnableIndirectBr || EnableIndirectCall || EnableIndirectGV ||
++        EnableIRFlattening || EnableIRStringEncryption) {
++      EnableIRObfusaction = true;
++    }
++
++    if (!EnableIRObfusaction) {
++      return false;
++    }
++
++    std::unique_ptr<ObfuscationOptions> Options(getOptions());
++    unsigned pointerSize = M.getDataLayout().getTypeAllocSize(PointerType::getUnqual(M.getContext()));
++    if (EnableIRStringEncryption || Options->EnableCSE) {
++      add(llvm::createStringEncryptionPass(true, Options.get()));
++    }
++
++    add(llvm::createFlatteningPass(pointerSize, EnableIRFlattening || Options->EnableCFF, Options.get()));
++    add(llvm::createIndirectBranchPass(pointerSize,
++        EnableIndirectBr || Options->EnableIndirectBr, Options.get()));
++    add(llvm::createIndirectCallPass(pointerSize, EnableIndirectCall ||
++                                         Options->EnableIndirectCall, Options.get()));
++    add(llvm::createIndirectGlobalVariablePass(pointerSize,
++        EnableIndirectGV || Options->EnableIndirectGV, Options.get()));
++
++    bool Changed = run(M);
++
++    return Changed;
++  }
++};
++} // namespace llvm
++
++char ObfuscationPassManager::ID = 0;
++ModulePass *llvm::createObfuscationPassManager() {
++  return new ObfuscationPassManager();
++}
++INITIALIZE_PASS_BEGIN(ObfuscationPassManager, "irobf", "Enable IR Obfuscation",
++                      false, false)
++INITIALIZE_PASS_END(ObfuscationPassManager, "irobf", "Enable IR Obfuscation",
++                    false, false)
+\ No newline at end of file
+diff --git "a/llvm/lib/Transforms/Obfuscation/StringEncryption.cpp" "b/llvm/lib/Transforms/Obfuscation/StringEncryption.cpp"
+new file mode 100644
+index 0000000..85b5a9b
+--- /dev/null
++++ "b/llvm/lib/Transforms/Obfuscation/StringEncryption.cpp"
+@@ -0,0 +1,546 @@
++#include "llvm/Transforms/Obfuscation/ObfuscationOptions.h"
++#include "llvm/Transforms/Obfuscation/StringEncryption.h"
++#include "llvm/Transforms/Obfuscation/Utils.h"
++#include "llvm/Transforms/Utils/GlobalStatus.h"
++#include "llvm/Transforms/IPO/Attributor.h"
++#include "llvm/IR/LLVMContext.h"
++#include "llvm/IR/Constants.h"
++#include "llvm/IR/GlobalValue.h"
++#include "llvm/IR/IRBuilder.h"
++#include "llvm/IR/InstIterator.h"
++#include "llvm/Support/raw_ostream.h"
++#include "llvm/CryptoUtils.h"
++#include <map>
++#include <set>
++#include <iostream>
++#include <algorithm>
++
++#define DEBUG_TYPE "string-encryption"
++
++using namespace llvm;
++namespace {
++struct StringEncryption : public ModulePass {
++  static char ID;
++  bool flag;
++
++  struct CSPEntry {
++    CSPEntry() : ID(0), Offset(0), DecGV(nullptr), DecStatus(nullptr), DecFunc(nullptr) {}
++    unsigned ID;
++    unsigned Offset;
++    GlobalVariable *DecGV;
++    GlobalVariable *DecStatus; // is decrypted or not
++    std::vector<uint8_t> Data;
++    std::vector<uint8_t> EncKey;
++    Function *DecFunc;
++  };
++
++  struct CSUser {
++    CSUser(Type* ETy, GlobalVariable *User, GlobalVariable *NewGV)
++        : Ty(ETy), GV(User), DecGV(NewGV), DecStatus(nullptr),
++          InitFunc(nullptr) {}
++    Type *Ty;
++    GlobalVariable *GV;
++    GlobalVariable *DecGV;
++    GlobalVariable *DecStatus; // is decrypted or not
++    Function *InitFunc; // InitFunc will use decryted string to initialize DecGV
++  };
++
++  ObfuscationOptions *Options;
++  CryptoUtils RandomEngine;
++  std::vector<CSPEntry *> ConstantStringPool;
++  std::map<GlobalVariable *, CSPEntry *> CSPEntryMap;
++  std::map<GlobalVariable *, CSUser *> CSUserMap;
++  GlobalVariable *EncryptedStringTable;
++  std::set<GlobalVariable *> MaybeDeadGlobalVars;
++
++  StringEncryption() : ModulePass(ID) {
++    this->flag = false;
++    Options = nullptr;
++  }
++
++  StringEncryption(bool flag, ObfuscationOptions *Options) : ModulePass(ID) {
++    this->flag = flag;
++    this->Options = Options;
++    initializeStringEncryptionPass(*PassRegistry::getPassRegistry());
++  }
++
++  bool doFinalization(Module &) {
++    for (CSPEntry *Entry : ConstantStringPool) {
++      delete (Entry);
++    }
++    for (auto &I : CSUserMap) {
++      CSUser *User = I.second;
++      delete (User);
++    }
++    ConstantStringPool.clear();
++    CSPEntryMap.clear();
++    CSUserMap.clear();
++    MaybeDeadGlobalVars.clear();
++    return false;
++  }
++
++  StringRef getPassName() const override { return {"StringEncryption"}; }
++
++  bool runOnModule(Module &M) override;
++  void collectConstantStringUser(GlobalVariable *CString, std::set<GlobalVariable *> &Users);
++  bool isValidToEncrypt(GlobalVariable *GV);
++  bool processConstantStringUse(Function *F);
++  void deleteUnusedGlobalVariable();
++  Function *buildDecryptFunction(Module *M, const CSPEntry *Entry);
++  Function *buildInitFunction(Module *M, const CSUser *User);
++  void getRandomBytes(std::vector<uint8_t> &Bytes, uint32_t MinSize, uint32_t MaxSize);
++  void lowerGlobalConstant(Constant *CV, IRBuilder<> &IRB, Value *Ptr, Type *Ty);
++  void lowerGlobalConstantStruct(ConstantStruct *CS, IRBuilder<> &IRB, Value *Ptr, Type *Ty);
++  void lowerGlobalConstantArray(ConstantArray *CA, IRBuilder<> &IRB, Value *Ptr, Type *Ty);
++};
++} // namespace llvm
++
++char StringEncryption::ID = 0;
++bool StringEncryption::runOnModule(Module &M) {
++  std::set<GlobalVariable *> ConstantStringUsers;
++
++  // collect all c strings
++
++  LLVMContext &Ctx = M.getContext();
++  ConstantInt *Zero = ConstantInt::get(Type::getInt32Ty(Ctx), 0);
++  for (GlobalVariable &GV : M.globals()) {
++    if (!GV.isConstant() || !GV.hasInitializer() ||
++      GV.hasDLLExportStorageClass() || GV.isDLLImportDependent()) {
++      continue;
++    }
++    Constant *Init = GV.getInitializer();
++    if (Init == nullptr)
++      continue;
++    if (ConstantDataSequential *CDS = dyn_cast<ConstantDataSequential>(Init)) {
++      if (CDS->isCString()) {
++        CSPEntry *Entry = new CSPEntry();
++        StringRef Data = CDS->getRawDataValues();
++        Entry->Data.reserve(Data.size());
++        for (unsigned i = 0; i < Data.size(); ++i) {
++          Entry->Data.push_back(static_cast<uint8_t>(Data[i]));
++        }
++        Entry->ID = static_cast<unsigned>(ConstantStringPool.size());
++        Constant *ZeroInit = Constant::getNullValue(CDS->getType());
++        GlobalVariable *DecGV = new GlobalVariable(M, CDS->getType(), false, GlobalValue::PrivateLinkage,
++                                                   ZeroInit, "dec" + Twine::utohexstr(Entry->ID) + GV.getName());
++        GlobalVariable *DecStatus = new GlobalVariable(M, Type::getInt32Ty(Ctx), false, GlobalValue::PrivateLinkage,
++                                                   Zero, "dec_status_" + Twine::utohexstr(Entry->ID) + GV.getName());
++        DecGV->setAlignment(MaybeAlign(GV.getAlignment()));
++        Entry->DecGV = DecGV;
++        Entry->DecStatus = DecStatus;
++        ConstantStringPool.push_back(Entry);
++        CSPEntryMap[&GV] = Entry;
++        collectConstantStringUser(&GV, ConstantStringUsers);
++      }
++    }
++  }
++
++  // encrypt those strings, build corresponding decrypt function
++  for (CSPEntry *Entry: ConstantStringPool) {
++    getRandomBytes(Entry->EncKey, 16, 32);
++    for (unsigned i = 0; i < Entry->Data.size(); ++i) {
++      Entry->Data[i] ^= Entry->EncKey[i % Entry->EncKey.size()];
++    }
++    Entry->DecFunc = buildDecryptFunction(&M, Entry);
++  }
++
++  // build initialization function for supported constant string users
++  for (GlobalVariable *GV: ConstantStringUsers) {
++    if (isValidToEncrypt(GV)) {
++      Type *EltType = GV->getValueType();
++      Constant *ZeroInit = Constant::getNullValue(EltType);
++      GlobalVariable *DecGV = new GlobalVariable(M, EltType, false, GlobalValue::PrivateLinkage,
++                                                 ZeroInit, "dec_" + GV->getName());
++      DecGV->setAlignment(MaybeAlign(GV->getAlignment()));
++      GlobalVariable *DecStatus = new GlobalVariable(M, Type::getInt32Ty(Ctx), false, GlobalValue::PrivateLinkage,
++          Zero, "dec_status_" + GV->getName());
++      CSUser *User = new CSUser(EltType, GV, DecGV);
++      User->DecStatus = DecStatus;
++      User->InitFunc = buildInitFunction(&M, User);
++      CSUserMap[GV] = User;
++    }
++  }
++
++  // emit the constant string pool
++  // | junk bytes | key 1 | encrypted string 1 | junk bytes | key 2 | encrypted string 2 | ...
++  std::vector<uint8_t> Data;
++  std::vector<uint8_t> JunkBytes;
++
++  JunkBytes.reserve(32);
++  for (CSPEntry *Entry: ConstantStringPool) {
++    JunkBytes.clear();
++    getRandomBytes(JunkBytes, 16, 32);
++    Data.insert(Data.end(), JunkBytes.begin(), JunkBytes.end());
++    Entry->Offset = static_cast<unsigned>(Data.size());
++    Data.insert(Data.end(), Entry->EncKey.begin(), Entry->EncKey.end());
++    Data.insert(Data.end(), Entry->Data.begin(), Entry->Data.end());
++  }
++
++  Constant *CDA = ConstantDataArray::get(M.getContext(), ArrayRef<uint8_t>(Data));
++  EncryptedStringTable = new GlobalVariable(M, CDA->getType(), true, GlobalValue::PrivateLinkage,
++                                            CDA, "EncryptedStringTable");
++
++  // decrypt string back at every use, change the plain string use to the decrypted one
++  bool Changed = false;
++  for (Function &F:M) {
++    if (F.isDeclaration())
++      continue;
++    Changed |= processConstantStringUse(&F);
++  }
++
++  for (auto &I : CSUserMap) {
++    CSUser *User = I.second;
++    Changed |= processConstantStringUse(User->InitFunc);
++  }
++
++  // delete unused global variables
++  deleteUnusedGlobalVariable();
++  for (CSPEntry *Entry: ConstantStringPool) {
++    if (Entry->DecFunc->use_empty()) {
++      Entry->DecFunc->eraseFromParent();
++    }
++  }
++  return Changed;
++}
++
++void StringEncryption::getRandomBytes(std::vector<uint8_t> &Bytes, uint32_t MinSize, uint32_t MaxSize) {
++  uint32_t N = RandomEngine.get_uint32_t();
++  uint32_t Len;
++
++  assert(MaxSize >= MinSize);
++
++  if (MinSize == MaxSize) {
++    Len = MinSize;
++  } else {
++    Len = MinSize + (N % (MaxSize - MinSize));
++  }
++
++  char *Buffer = new char[Len];
++  RandomEngine.get_bytes(Buffer, Len);
++  for (uint32_t i = 0; i < Len; ++i) {
++    Bytes.push_back(static_cast<uint8_t>(Buffer[i]));
++  }
++
++  delete[] Buffer;
++}
++
++//
++//static void goron_decrypt_string(uint8_t *plain_string, const uint8_t *data)
++//{
++//  const uint8_t *key = data;
++//  uint32_t key_size = 1234;
++//  uint8_t *es = (uint8_t *) &data[key_size];
++//  uint32_t i;
++//  for (i = 0;i < 5678;i ++) {
++//    plain_string[i] = es[i] ^ key[i % key_size];
++//  }
++//}
++
++Function *StringEncryption::buildDecryptFunction(Module *M, const StringEncryption::CSPEntry *Entry) {
++  LLVMContext &Ctx = M->getContext();
++  IRBuilder<> IRB(Ctx);
++  FunctionType *FuncTy = FunctionType::get(
++      Type::getVoidTy(Ctx),
++      {PointerType::getUnqual(Ctx), PointerType::getUnqual(Ctx)},
++      false);
++  Function *DecFunc =
++      Function::Create(FuncTy, GlobalValue::PrivateLinkage, "goron_decrypt_string_" + Twine::utohexstr(Entry->ID), M);
++
++  auto ArgIt = DecFunc->arg_begin();
++  Argument *PlainString = ArgIt; // output
++  ++ArgIt;
++  Argument *Data = ArgIt;       // input
++
++  PlainString->setName("plain_string");
++  PlainString->addAttr(Attribute::NoCapture);
++  Data->setName("data");
++  Data->addAttr(Attribute::NoCapture);
++  Data->addAttr(Attribute::ReadOnly);
++
++  BasicBlock *Enter = BasicBlock::Create(Ctx, "Enter", DecFunc);
++  BasicBlock *LoopBody = BasicBlock::Create(Ctx, "LoopBody", DecFunc);
++  BasicBlock *UpdateDecStatus = BasicBlock::Create(Ctx, "UpdateDecStatus", DecFunc);
++  BasicBlock *Exit = BasicBlock::Create(Ctx, "Exit", DecFunc);
++
++  IRB.SetInsertPoint(Enter);
++  ConstantInt *KeySize = ConstantInt::get(Type::getInt32Ty(Ctx), Entry->EncKey.size());
++  Value *EncPtr = IRB.CreateInBoundsGEP(IRB.getInt8Ty(), Data, KeySize);
++  Value *DecStatus = IRB.CreateLoad(
++      Entry->DecStatus->getValueType(), Entry->DecStatus);
++  Value *IsDecrypted = IRB.CreateICmpEQ(DecStatus, IRB.getInt32(1));
++  IRB.CreateCondBr(IsDecrypted, Exit, LoopBody);
++
++  IRB.SetInsertPoint(LoopBody);
++  PHINode *LoopCounter = IRB.CreatePHI(IRB.getInt32Ty(), 2);
++  LoopCounter->addIncoming(IRB.getInt32(0), Enter);
++
++  Value *EncCharPtr =
++      IRB.CreateInBoundsGEP(IRB.getInt8Ty(), EncPtr,
++      LoopCounter);
++  Value *EncChar = IRB.CreateLoad(IRB.getInt8Ty(), EncCharPtr);
++  Value *KeyIdx = IRB.CreateURem(LoopCounter, KeySize);
++
++  Value *KeyCharPtr = IRB.CreateInBoundsGEP(IRB.getInt8Ty(), Data, KeyIdx);
++  Value *KeyChar = IRB.CreateLoad(IRB.getInt8Ty(), KeyCharPtr);
++
++  Value *DecChar = IRB.CreateXor(EncChar, KeyChar);
++  Value *DecCharPtr = IRB.CreateInBoundsGEP(IRB.getInt8Ty(),
++      PlainString, LoopCounter);
++  IRB.CreateStore(DecChar, DecCharPtr);
++
++  Value *NewCounter = IRB.CreateAdd(LoopCounter, IRB.getInt32(1), "", true, true);
++  LoopCounter->addIncoming(NewCounter, LoopBody);
++
++  Value *Cond = IRB.CreateICmpEQ(NewCounter, IRB.getInt32(static_cast<uint32_t>(Entry->Data.size())));
++  IRB.CreateCondBr(Cond, UpdateDecStatus, LoopBody);
++
++  IRB.SetInsertPoint(UpdateDecStatus);
++  IRB.CreateStore(IRB.getInt32(1), Entry->DecStatus);
++  IRB.CreateBr(Exit);
++
++  IRB.SetInsertPoint(Exit);
++  IRB.CreateRetVoid();
++
++  return DecFunc;
++}
++
++Function *StringEncryption::buildInitFunction(Module *M, const StringEncryption::CSUser *User) {
++  LLVMContext &Ctx = M->getContext();
++  IRBuilder<> IRB(Ctx);
++  FunctionType *FuncTy = FunctionType::get(Type::getVoidTy(Ctx), {User->DecGV->getType()}, false);
++  Function *InitFunc =
++      Function::Create(FuncTy, GlobalValue::PrivateLinkage, "__global_variable_initializer_" + User->GV->getName(), M);
++
++  auto ArgIt = InitFunc->arg_begin();
++  Argument *thiz = ArgIt;
++
++  thiz->setName("this");
++  thiz->addAttr(Attribute::NoCapture);
++
++  // convert constant initializer into a series of instructions
++  BasicBlock *Enter = BasicBlock::Create(Ctx, "Enter", InitFunc);
++  BasicBlock *InitBlock = BasicBlock::Create(Ctx, "InitBlock", InitFunc);
++  BasicBlock *Exit = BasicBlock::Create(Ctx, "Exit", InitFunc);
++
++  IRB.SetInsertPoint(Enter);
++  Value *DecStatus = IRB.CreateLoad(
++      User->DecStatus->getValueType(), User->DecStatus);
++  Value *IsDecrypted = IRB.CreateICmpEQ(DecStatus, IRB.getInt32(1));
++  IRB.CreateCondBr(IsDecrypted, Exit, InitBlock);
++
++  IRB.SetInsertPoint(InitBlock);
++  Constant *Init = User->GV->getInitializer();
++  lowerGlobalConstant(Init, IRB, User->DecGV, User->Ty);
++  IRB.CreateStore(IRB.getInt32(1), User->DecStatus);
++  IRB.CreateBr(Exit);
++
++  IRB.SetInsertPoint(Exit);
++  IRB.CreateRetVoid();
++  return InitFunc;
++}
++
++void StringEncryption::lowerGlobalConstant(Constant *CV, IRBuilder<> &IRB, Value *Ptr, Type *Ty) {
++  if (isa<ConstantAggregateZero>(CV)) {
++    IRB.CreateStore(CV, Ptr);
++    return;
++  }
++
++  if (ConstantArray *CA = dyn_cast<ConstantArray>(CV)) {
++    lowerGlobalConstantArray(CA, IRB, Ptr, Ty);
++  } else if (ConstantStruct *CS = dyn_cast<ConstantStruct>(CV)) {
++    lowerGlobalConstantStruct(CS, IRB, Ptr, Ty);
++  } else {
++    IRB.CreateStore(CV, Ptr);
++  }
++}
++
++void StringEncryption::lowerGlobalConstantArray(ConstantArray *CA, IRBuilder<> &IRB, Value *Ptr, Type *Ty) {
++  for (unsigned i = 0, e = CA->getNumOperands(); i != e; ++i) {
++    Constant *CV = CA->getOperand(i);
++    Value *GEP = IRB.CreateGEP(Ty,
++                      Ptr, {IRB.getInt32(0), IRB.getInt32(i)});
++    lowerGlobalConstant(CV, IRB, GEP, CV->getType());
++  }
++}
++
++void StringEncryption::lowerGlobalConstantStruct(ConstantStruct *CS, IRBuilder<> &IRB, Value *Ptr, Type *Ty) {
++  for (unsigned i = 0, e = CS->getNumOperands(); i != e; ++i) {
++    Constant* CV = CS->getOperand(i);
++    Value *GEP = IRB.CreateGEP(Ty,
++                      Ptr, {IRB.getInt32(0), IRB.getInt32(i)});
++    lowerGlobalConstant(CV, IRB, GEP, CV->getType());
++  }
++}
++
++bool StringEncryption::processConstantStringUse(Function *F) {
++  if (!toObfuscate(flag, F, "cse")) {
++    return false;
++  }
++  if (Options && Options->skipFunction(F->getName())) {
++    return false;
++  }
++  LLVMContext &Ctx = F->getContext();
++  LowerConstantExpr(*F);
++  SmallPtrSet<GlobalVariable *, 16> DecryptedGV; // if GV has multiple use in a block, decrypt only at the first use
++  bool Changed = false;
++  for (BasicBlock &BB : *F) {
++    DecryptedGV.clear();
++    if (BB.isEHPad()) {
++      continue;
++    }
++    for (Instruction &Inst: BB) {
++      if (Inst.isEHPad()) {
++        continue;
++      }
++      if (PHINode *PHI = dyn_cast<PHINode>(&Inst)) {
++        for (unsigned int i = 0; i < PHI->getNumIncomingValues(); ++i) {
++          if (GlobalVariable *GV = dyn_cast<GlobalVariable>(PHI->getIncomingValue(i))) {
++            auto Iter1 = CSPEntryMap.find(GV);
++            auto Iter2 = CSUserMap.find(GV);
++            if (Iter2 != CSUserMap.end()) { // GV is a constant string user
++              CSUser *User = Iter2->second;
++              if (DecryptedGV.count(GV) > 0) {
++                Inst.replaceUsesOfWith(GV, User->DecGV);
++              } else {
++                Instruction *InsertPoint = PHI->getIncomingBlock(i)->getTerminator();
++                IRBuilder<> IRB(InsertPoint);
++                IRB.CreateCall(User->InitFunc, {User->DecGV});
++                Inst.replaceUsesOfWith(GV, User->DecGV);
++                MaybeDeadGlobalVars.insert(GV);
++                DecryptedGV.insert(GV);
++                Changed = true;
++              }
++            } else if (Iter1 != CSPEntryMap.end()) { // GV is a constant string
++              CSPEntry *Entry = Iter1->second;
++              if (DecryptedGV.count(GV) > 0) {
++                Inst.replaceUsesOfWith(GV, Entry->DecGV);
++              } else {
++                Instruction *InsertPoint = PHI->getIncomingBlock(i)->getTerminator();
++                IRBuilder<> IRB(InsertPoint);
++
++                Value *OutBuf = IRB.CreateBitCast(Entry->DecGV,
++                                                  PointerType::getUnqual(Ctx));
++                Value *Data = IRB.CreateInBoundsGEP(
++                    EncryptedStringTable->getValueType(),
++                    EncryptedStringTable,
++                    {IRB.getInt32(0), IRB.getInt32(Entry->Offset)});
++                IRB.CreateCall(Entry->DecFunc, {OutBuf, Data});
++
++                Inst.replaceUsesOfWith(GV, Entry->DecGV);
++                MaybeDeadGlobalVars.insert(GV);
++                DecryptedGV.insert(GV);
++                Changed = true;
++              }
++            }
++          }
++        }
++      } else {
++        for (User::op_iterator op = Inst.op_begin(); op != Inst.op_end(); ++op) {
++          if (GlobalVariable *GV = dyn_cast<GlobalVariable>(*op)) {
++            auto Iter1 = CSPEntryMap.find(GV);
++            auto Iter2 = CSUserMap.find(GV);
++            if (Iter2 != CSUserMap.end()) {
++              CSUser *User = Iter2->second;
++              if (DecryptedGV.count(GV) > 0) {
++                Inst.replaceUsesOfWith(GV, User->DecGV);
++              } else {
++                IRBuilder<> IRB(&Inst);
++                IRB.CreateCall(User->InitFunc, {User->DecGV});
++                Inst.replaceUsesOfWith(GV, User->DecGV);
++                MaybeDeadGlobalVars.insert(GV);
++                DecryptedGV.insert(GV);
++                Changed = true;
++              }
++            } else if (Iter1 != CSPEntryMap.end()) {
++              CSPEntry *Entry = Iter1->second;
++              if (DecryptedGV.count(GV) > 0) {
++                Inst.replaceUsesOfWith(GV, Entry->DecGV);
++              } else {
++                IRBuilder<> IRB(&Inst);
++
++                Value *OutBuf = IRB.CreateBitCast(Entry->DecGV,
++                                                  PointerType::getUnqual(Ctx));
++                Value *Data = IRB.CreateInBoundsGEP(
++                    EncryptedStringTable->getValueType(),
++                    EncryptedStringTable,
++                    {IRB.getInt32(0), IRB.getInt32(Entry->Offset)});
++                IRB.CreateCall(Entry->DecFunc, {OutBuf, Data});
++
++                Inst.replaceUsesOfWith(GV, Entry->DecGV);
++                MaybeDeadGlobalVars.insert(GV);
++                DecryptedGV.insert(GV);
++                Changed = true;
++              }
++            }
++          }
++        }
++      }
++    }
++  }
++  return Changed;
++}
++
++void StringEncryption::collectConstantStringUser(GlobalVariable *CString, std::set<GlobalVariable *> &Users) {
++  SmallPtrSet<Value *, 16> Visited;
++  SmallVector<Value *, 16> ToVisit;
++
++  ToVisit.push_back(CString);
++  while (!ToVisit.empty()) {
++    Value *V = ToVisit.pop_back_val();
++    if (Visited.count(V) > 0)
++      continue;
++    Visited.insert(V);
++    for (Value *User:V->users()) {
++      if (auto *GV = dyn_cast<GlobalVariable>(User)) {
++        Users.insert(GV);
++      } else {
++        ToVisit.push_back(User);
++      }
++    }
++  }
++}
++
++bool StringEncryption::isValidToEncrypt(GlobalVariable *GV) {
++  if(GV->isConstant() && GV->hasInitializer()) {
++    return GV->getInitializer() != nullptr;
++  } else {
++    return false;
++  }
++}
++
++void StringEncryption::deleteUnusedGlobalVariable() {
++  bool Changed = true;
++  while (Changed) {
++    Changed = false;
++    for (auto Iter = MaybeDeadGlobalVars.begin(); Iter != MaybeDeadGlobalVars.end();) {
++      GlobalVariable *GV = *Iter;
++      if (!GV->hasLocalLinkage()) {
++        ++Iter;
++        continue;
++      }
++
++      GV->removeDeadConstantUsers();
++      if (GV->use_empty()) {
++        if (GV->hasInitializer()) {
++          Constant *Init = GV->getInitializer();
++          GV->setInitializer(nullptr);
++          if (isSafeToDestroyConstant(Init))
++            Init->destroyConstant();
++        }
++        Iter = MaybeDeadGlobalVars.erase(Iter);
++        GV->eraseFromParent();
++        Changed = true;
++      } else {
++        ++Iter;
++      }
++    }
++  }
++}
++
++ModulePass *llvm::createStringEncryptionPass() { return new StringEncryption(); }
++ModulePass *llvm::createStringEncryptionPass(bool flag,
++                                             ObfuscationOptions *Options) {
++  return new StringEncryption(flag, Options);
++}
++
++INITIALIZE_PASS(StringEncryption, "string-encryption", "Enable IR String Encryption", false, false)
+diff --git "a/llvm/lib/Transforms/Obfuscation/Utils.cpp" "b/llvm/lib/Transforms/Obfuscation/Utils.cpp"
+new file mode 100644
+index 0000000..952c055
+--- /dev/null
++++ "b/llvm/lib/Transforms/Obfuscation/Utils.cpp"
+@@ -0,0 +1,195 @@
++#include "llvm/Transforms/Obfuscation/Utils.h"
++#include "llvm/IR/InstIterator.h"
++#include "llvm/IR/IntrinsicInst.h"
++#include "llvm/IR/IRBuilder.h"
++
++// Shamefully borrowed from ../Scalar/RegToMem.cpp :(
++bool valueEscapes(Instruction *Inst) {
++  BasicBlock *BB = Inst->getParent();
++  for (Value::use_iterator UI = Inst->use_begin(), E = Inst->use_end(); UI != E;
++       ++UI) {
++    Instruction *I = cast<Instruction>(*UI);
++    if (I->getParent() != BB || isa<PHINode>(I)) {
++      return true;
++    }
++  }
++  return false;
++}
++
++void fixStack(Function *f) {
++  // Try to remove phi node and demote reg to stack
++  std::vector<PHINode *> tmpPhi;
++  std::vector<Instruction *> tmpReg;
++  BasicBlock *bbEntry = &*f->begin();
++
++  do {
++    tmpPhi.clear();
++    tmpReg.clear();
++
++    for (Function::iterator i = f->begin(); i != f->end(); ++i) {
++
++      for (BasicBlock::iterator j = i->begin(); j != i->end(); ++j) {
++
++        if (isa<PHINode>(j)) {
++          PHINode *phi = cast<PHINode>(j);
++          tmpPhi.push_back(phi);
++          continue;
++        }
++        if (!(isa<AllocaInst>(j) && j->getParent() == bbEntry) &&
++            (valueEscapes(&*j) || j->isUsedOutsideOfBlock(&*i))) {
++          tmpReg.push_back(&*j);
++          continue;
++        }
++      }
++    }
++    for (unsigned int i = 0; i != tmpReg.size(); ++i) {
++      DemoteRegToStack(*tmpReg.at(i), f->begin()->getTerminator());
++    }
++
++    for (unsigned int i = 0; i != tmpPhi.size(); ++i) {
++      DemotePHIToStack(tmpPhi.at(i), f->begin()->getTerminator());
++    }
++
++  } while (tmpReg.size() != 0 || tmpPhi.size() != 0);
++}
++
++std::string readAnnotate(Function *f) {
++  std::string annotation = "";
++
++  // Get annotation variable
++  GlobalVariable *glob =
++      f->getParent()->getGlobalVariable("llvm.global.annotations");
++
++  if (glob != NULL) {
++    // Get the array
++    if (ConstantArray *ca = dyn_cast<ConstantArray>(glob->getInitializer())) {
++      for (unsigned i = 0; i < ca->getNumOperands(); ++i) {
++        // Get the struct
++        if (ConstantStruct *structAn =
++            dyn_cast<ConstantStruct>(ca->getOperand(i))) {
++          if (ConstantExpr *expr =
++              dyn_cast<ConstantExpr>(structAn->getOperand(0))) {
++            // If it's a bitcast we can check if the annotation is concerning
++            // the current function
++            if (expr->getOpcode() == Instruction::BitCast &&
++                expr->getOperand(0) == f) {
++              ConstantExpr *note = cast<ConstantExpr>(structAn->getOperand(1));
++              // If it's a GetElementPtr, that means we found the variable
++              // containing the annotations
++              if (note->getOpcode() == Instruction::GetElementPtr) {
++                if (GlobalVariable *annoteStr =
++                    dyn_cast<GlobalVariable>(note->getOperand(0))) {
++                  if (ConstantDataSequential *data =
++                      dyn_cast<ConstantDataSequential>(
++                          annoteStr->getInitializer())) {
++                    if (data->isString()) {
++                      annotation += data->getAsString().lower() + " ";
++                    }
++                  }
++                }
++              }
++            }
++          }
++        }
++      }
++    }
++  }
++  return annotation;
++}
++
++bool toObfuscate(bool flag, Function *f, std::string attribute) {
++  std::string attr = attribute;
++  std::string attrNo = "no" + attr;
++
++  // Check if declaration
++  if (f->isDeclaration()) {
++    return false;
++  }
++
++  // Check external linkage
++  if(f->hasAvailableExternallyLinkage() != 0) {
++    return false;
++  }
++
++  // We have to check the nofla flag first
++  // Because .find("fla") is true for a string like "fla" or
++  // "nofla"
++  if (readAnnotate(f).find(attrNo) != std::string::npos) {
++    return false;
++  }
++
++  // If fla annotations
++  if (readAnnotate(f).find(attr) != std::string::npos) {
++    return true;
++  }
++
++  // If fla flag is set
++  if (flag == true) {
++    /* Check if the number of applications is correct
++    if (!((Percentage > 0) && (Percentage <= 100))) {
++      LLVMContext &ctx = llvm::getGlobalContext();
++      ctx.emitError(Twine("Flattening application function\
++              percentage -perFLA=x must be 0 < x <= 100"));
++    }
++    // Check name
++    else if (func.size() != 0 && func.find(f->getName()) != std::string::npos) {
++      return true;
++    }
++
++    if ((((int)llvm::cryptoutils->get_range(100))) < Percentage) {
++      return true;
++    }
++    */
++    return true;
++  }
++
++  return false;
++}
++
++void LowerConstantExpr(Function &F) {
++  SmallPtrSet<Instruction *, 8> WorkList;
++
++  for (inst_iterator It = inst_begin(F), E = inst_end(F); It != E; ++It) {
++    Instruction *I = &*It;
++
++    if (isa<LandingPadInst>(I) || isa<CatchPadInst>(I) || isa<CatchSwitchInst>(I) || isa<CatchReturnInst>(I))
++      continue;
++    if (auto *II = dyn_cast<IntrinsicInst>(I)) {
++      if (II->getIntrinsicID() == Intrinsic::eh_typeid_for) {
++        continue;
++      }
++    }
++
++    for (unsigned int i = 0; i < I->getNumOperands(); ++i) {
++      if (isa<ConstantExpr>(I->getOperand(i)))
++        WorkList.insert(I);
++    }
++  }
++
++  while (!WorkList.empty()) {
++    auto It = WorkList.begin();
++    Instruction *I = *It;
++    WorkList.erase(*It);
++
++    if (PHINode *PHI = dyn_cast<PHINode>(I)) {
++      for (unsigned int i = 0; i < PHI->getNumIncomingValues(); ++i) {
++        Instruction *TI = PHI->getIncomingBlock(i)->getTerminator();
++        if (ConstantExpr *CE = dyn_cast<ConstantExpr>(PHI->getIncomingValue(i))) {
++          Instruction *NewInst = CE->getAsInstruction();
++          NewInst->insertBefore(TI);
++          PHI->setIncomingValue(i, NewInst);
++          WorkList.insert(NewInst);
++        }
++      }
++    } else {
++      for (unsigned int i = 0; i < I->getNumOperands(); ++i) {
++        if (ConstantExpr *CE = dyn_cast<ConstantExpr>(I->getOperand(i))) {
++          Instruction *NewInst = CE->getAsInstruction();
++          NewInst->insertBefore(I);
++          I->replaceUsesOfWith(CE, NewInst);
++          WorkList.insert(NewInst);
++        }
++      }
++    }
++  }
++}
