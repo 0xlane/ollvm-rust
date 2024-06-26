@@ -58,7 +58,7 @@ llvm-config.exe --components | findstr obfuscation
 opt.exe --help | findstr Obfuscation
 ```
 
-然后修改 rust 源码目录下的 `config.toml`，`llvm-config` 注释去掉，修改值改为自己编译出来的实际路径：
+如果使用已经编译好的 llvm 再编译 rust，可以修改 rust 源码目录下的 `config.toml`，把 `llvm-config` 注释去掉，值修改为 `llvm-config.exe` 的实际路径：
 
 ```toml
 llvm-config = "D:\\dev\\llvm-build\\build_dyn_x64\\bin\\llvm-config.exe"
