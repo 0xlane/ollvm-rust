@@ -14,6 +14,8 @@
 
 > 注意：该项目当前仅在 windows x86 下测试，其他平台未测试
 
+![effect.png](assets/effect.png)
+
 ## 当前适配版本
 
 具体到小版本，别的版本不保证兼容
@@ -24,7 +26,21 @@
 
 ## x86_64-pc-windows-msvc 工具链
 
+### 环境
+
+- Windows 11 (10.0.22631.3737)
+- Git 2.45
+- Python 3.11
+- Visual Studio 2022 (17.10.3)
+  - 使用 C++ 的桌面开发
+  - 单个组件 （如果编译出现问题，比如找不到 crt 相关的头，尝试安装下面的组件）
+    - Windows 通用 C 运行时
+    - Windows 10 SDK (10.0.20348.0)
+    - Windows 通用 CRT SDK
+
 ### 编译
+
+需在 `x64 Native Tools Command Prompt for VS 2022` 环境中执行，从开始菜单或者执行 `cmd.exe /k "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\Tools\VsDevCmd.bat" -startdir=none -arch=x64 -host_arch=x64` 进入：
 
 ```bash
 git clone --branch 1.79.0 https://github.com/0xlane/ollvm-rust.git
