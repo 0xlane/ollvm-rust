@@ -151,7 +151,7 @@ INITIALIZE_PASS_END(ObfuscationPassManager, "irobf", "Enable IR Obfuscation",
 //-----------------------------------------------------------------------------
 // New PM Registration
 //-----------------------------------------------------------------------------
-llvm::PassPluginLibraryInfo getHelloWorldPluginInfo() {
+llvm::PassPluginLibraryInfo getObfPassPluginInfo() {
   return {LLVM_PLUGIN_API_VERSION, "Obfuscation", LLVM_VERSION_STRING,
           [](PassBuilder &PB) {
             PB.registerPipelineParsingCallback(
@@ -188,5 +188,5 @@ llvm::PassPluginLibraryInfo getHelloWorldPluginInfo() {
 // command line, i.e. via '-passes=hello-world'
 extern "C" LLVM_ATTRIBUTE_WEAK ::llvm::PassPluginLibraryInfo
 llvmGetPassPluginInfo() {
-  return getHelloWorldPluginInfo();
+  return getObfPassPluginInfo();
 }

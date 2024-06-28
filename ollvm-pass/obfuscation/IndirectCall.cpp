@@ -1,9 +1,9 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/IRBuilder.h"
-#include "llvm/Transforms/Obfuscation/IndirectCall.h"
-#include "llvm/Transforms/Obfuscation/ObfuscationOptions.h"
-#include "llvm/Transforms/Obfuscation/Utils.h"
-#include "llvm/CryptoUtils.h"
+#include "include/IndirectCall.h"
+#include "include/ObfuscationOptions.h"
+#include "include/Utils.h"
+#include "include/CryptoUtils.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/ModuleUtils.h"
 

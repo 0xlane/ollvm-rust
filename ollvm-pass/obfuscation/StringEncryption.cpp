@@ -9,7 +9,7 @@
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/CryptoUtils.h"
+#include "include/CryptoUtils.h"
 #include <map>
 #include <set>
 #include <iostream>

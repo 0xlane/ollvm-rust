@@ -15,7 +15,7 @@
 #include "include/Flattening.h"
 #include "include/LegacyLowerSwitch.h"
 #include "include/Utils.h"
-#include "llvm/CryptoUtils.h"
+#include "include/CryptoUtils.h"
 #include "llvm/ADT/Statistic.h"
 
 #define DEBUG_TYPE "flattening"

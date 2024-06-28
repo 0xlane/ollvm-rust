@@ -4,7 +4,7 @@
 #include "include/IndirectGlobalVariable.h"
 #include "include/ObfuscationOptions.h"
 #include "include/Utils.h"
-#include "llvm/CryptoUtils.h"
+#include "include/CryptoUtils.h"
 #include "llvm/Transforms/Utils/ModuleUtils.h"
 
 #define DEBUG_TYPE "indgv"
